@@ -1,0 +1,426 @@
+{
+  "count": 105,
+  "markets": [
+    {
+      "name": "PENGU",
+      "market_id": 47
+    },
+    {
+      "name": "CRV",
+      "market_id": 36
+    },
+    {
+      "name": "MYX",
+      "market_id": 80
+    },
+    {
+      "name": "UNI",
+      "market_id": 30
+    },
+    {
+      "name": "NEAR",
+      "market_id": 10
+    },
+    {
+      "name": "DOGE",
+      "market_id": 3
+    },
+    {
+      "name": "SPX",
+      "market_id": 42
+    },
+    {
+      "name": "LDO",
+      "market_id": 46
+    },
+    {
+      "name": "SKY",
+      "market_id": 79
+    },
+    {
+      "name": "GRASS",
+      "market_id": 52
+    },
+    {
+      "name": "NMR",
+      "market_id": 74
+    },
+    {
+      "name": "BCH",
+      "market_id": 58
+    },
+    {
+      "name": "2Z",
+      "market_id": 88
+    },
+    {
+      "name": "PENDLE",
+      "market_id": 37
+    },
+    {
+      "name": "PROVE",
+      "market_id": 57
+    },
+    {
+      "name": "ZRO",
+      "market_id": 60
+    },
+    {
+      "name": "MET",
+      "market_id": 95
+    },
+    {
+      "name": "FARTCOIN",
+      "market_id": 21
+    },
+    {
+      "name": "POPCAT",
+      "market_id": 23
+    },
+    {
+      "name": "AAVE",
+      "market_id": 27
+    },
+    {
+      "name": "PYTH",
+      "market_id": 78
+    },
+    {
+      "name": "0G",
+      "market_id": 84
+    },
+    {
+      "name": "MKR",
+      "market_id": 28
+    },
+    {
+      "name": "ENA",
+      "market_id": 29
+    },
+    {
+      "name": "PAXG",
+      "market_id": 48
+    },
+    {
+      "name": "STBL",
+      "market_id": 85
+    },
+    {
+      "name": "IP",
+      "market_id": 34
+    },
+    {
+      "name": "TIA",
+      "market_id": 67
+    },
+    {
+      "name": "VVV",
+      "market_id": 69
+    },
+    {
+      "name": "XMR",
+      "market_id": 77
+    },
+    {
+      "name": "AERO",
+      "market_id": 65
+    },
+    {
+      "name": "TRX",
+      "market_id": 43
+    },
+    {
+      "name": "LINK",
+      "market_id": 8
+    },
+    {
+      "name": "EIGEN",
+      "market_id": 49
+    },
+    {
+      "name": "WLD",
+      "market_id": 6
+    },
+    {
+      "name": "ICP",
+      "market_id": 102
+    },
+    {
+      "name": "TRUMP",
+      "market_id": 15
+    },
+    {
+      "name": "AVAX",
+      "market_id": 9
+    },
+    {
+      "name": "JUP",
+      "market_id": 26
+    },
+    {
+      "name": "ZORA",
+      "market_id": 53
+    },
+    {
+      "name": "FF",
+      "market_id": 87
+    },
+    {
+      "name": "USDCAD",
+      "market_id": 100
+    },
+    {
+      "name": "SYRUP",
+      "market_id": 44
+    },
+    {
+      "name": "EDEN",
+      "market_id": 89
+    },
+    {
+      "name": "OP",
+      "market_id": 55
+    },
+    {
+      "name": "PUMP",
+      "market_id": 45
+    },
+    {
+      "name": "AVNT",
+      "market_id": 82
+    },
+    {
+      "name": "ETHFI",
+      "market_id": 64
+    },
+    {
+      "name": "1000TOSHI",
+      "market_id": 81
+    },
+    {
+      "name": "STRK",
+      "market_id": 104
+    },
+    {
+      "name": "HYPE",
+      "market_id": 24
+    },
+    {
+      "name": "WLFI",
+      "market_id": 72
+    },
+    {
+      "name": "ARB",
+      "market_id": 50
+    },
+    {
+      "name": "TAO",
+      "market_id": 13
+    },
+    {
+      "name": "1000BONK",
+      "market_id": 18
+    },
+    {
+      "name": "BTC",
+      "market_id": 1
+    },
+    {
+      "name": "XAG",
+      "market_id": 93
+    },
+    {
+      "name": "GMX",
+      "market_id": 61
+    },
+    {
+      "name": "USDCHF",
+      "market_id": 99
+    },
+    {
+      "name": "1000SHIB",
+      "market_id": 17
+    },
+    {
+      "name": "LTC",
+      "market_id": 35
+    },
+    {
+      "name": "S",
+      "market_id": 40
+    },
+    {
+      "name": "LINEA",
+      "market_id": 76
+    },
+    {
+      "name": "XPL",
+      "market_id": 71
+    },
+    {
+      "name": "RESOLV",
+      "market_id": 51
+    },
+    {
+      "name": "VIRTUAL",
+      "market_id": 41
+    },
+    {
+      "name": "ASTER",
+      "market_id": 83
+    },
+    {
+      "name": "APT",
+      "market_id": 31
+    },
+    {
+      "name": "SOL",
+      "market_id": 2
+    },
+    {
+      "name": "DOT",
+      "market_id": 11
+    },
+    {
+      "name": "YZY",
+      "market_id": 70
+    },
+    {
+      "name": "MON",
+      "market_id": 91
+    },
+    {
+      "name": "POL",
+      "market_id": 14
+    },
+    {
+      "name": "KAITO",
+      "market_id": 33
+    },
+    {
+      "name": "DOLO",
+      "market_id": 75
+    },
+    {
+      "name": "BERA",
+      "market_id": 20
+    },
+    {
+      "name": "ONDO",
+      "market_id": 38
+    },
+    {
+      "name": "WIF",
+      "market_id": 5
+    },
+    {
+      "name": "1000PEPE",
+      "market_id": 4
+    },
+    {
+      "name": "ETH",
+      "market_id": 0
+    },
+    {
+      "name": "ZEC",
+      "market_id": 90
+    },
+    {
+      "name": "USDJPY",
+      "market_id": 98
+    },
+    {
+      "name": "XRP",
+      "market_id": 7
+    },
+    {
+      "name": "AI16Z",
+      "market_id": 22
+    },
+    {
+      "name": "APEX",
+      "market_id": 86
+    },
+    {
+      "name": "ZK",
+      "market_id": 56
+    },
+    {
+      "name": "SUI",
+      "market_id": 16
+    },
+    {
+      "name": "MNT",
+      "market_id": 63
+    },
+    {
+      "name": "DYDX",
+      "market_id": 62
+    },
+    {
+      "name": "EURUSD",
+      "market_id": 96
+    },
+    {
+      "name": "HBAR",
+      "market_id": 59
+    },
+    {
+      "name": "MEGA",
+      "market_id": 94
+    },
+    {
+      "name": "GBPUSD",
+      "market_id": 97
+    },
+    {
+      "name": "1000FLOKI",
+      "market_id": 19
+    },
+    {
+      "name": "LAUNCHCOIN",
+      "market_id": 54
+    },
+    {
+      "name": "CC",
+      "market_id": 101
+    },
+    {
+      "name": "BNB",
+      "market_id": 25
+    },
+    {
+      "name": "SEI",
+      "market_id": 32
+    },
+    {
+      "name": "XAU",
+      "market_id": 92
+    },
+    {
+      "name": "CRO",
+      "market_id": 73
+    },
+    {
+      "name": "TON",
+      "market_id": 12
+    },
+    {
+      "name": "MORPHO",
+      "market_id": 68
+    },
+    {
+      "name": "FIL",
+      "market_id": 103
+    },
+    {
+      "name": "USELESS",
+      "market_id": 66
+    },
+    {
+      "name": "ADA",
+      "market_id": 39
+    }
+  ],
+  "timestamp": "2025-11-10T19:52:29+07:00"
+}
