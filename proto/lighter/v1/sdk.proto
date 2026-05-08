@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package lighter.v1;
+
+option go_package = "github.com/0xarchiviste/lighter-mcp/gen/lighter/v1;lighv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+// Lighter is the programmatic SDK API exposed over gRPC (separate from MCP transport).
+service Lighter {
+  rpc GetBalance(google.protobuf.Empty) returns (google.protobuf.Value);
+  rpc ListMarkets(ListMarketsRequest) returns (google.protobuf.Value);
+  rpc GetMarket(GetMarketRequest) returns (google.protobuf.Value);
+  rpc ListPositions(ListPositionsRequest) returns (google.protobuf.Value);
+  rpc PlaceLimitOrder(PlaceLimitOrderRequest) returns (google.protobuf.Value);
+  rpc CancelOrder(CancelOrderRequest) returns (google.protobuf.Value);
+  rpc SetTPSL(SetTPSLRequest) returns (google.protobuf.Value);
+  rpc ClosePosition(ClosePositionRequest) returns (google.protobuf.Value);
+  rpc CalculateIndicator(CalculateIndicatorRequest) returns (google.protobuf.Value);
+}
+
+message ListMarketsRequest {
+  int32 limit = 1;
+}
+
+message GetMarketRequest {
+  string symbol = 1;
+}
+
+message ListPositionsRequest {
+  string market = 1;
+}
+
+message PlaceLimitOrderRequest {
+  string market = 1;
+  string side = 2;
+  double price = 3;
+  double size = 4;
+}
+
+message CancelOrderRequest {
+  string market = 1;
+  int64 client_order_index = 2;
+}
+
+message SetTPSLRequest {
+  string market = 1;
+  double tp_price = 2;
+  double sl_price = 3;
+}
+
+message ClosePositionRequest {
+  string market = 1;
+}
+
+message CalculateIndicatorRequest {
+  string market = 1;
+  string indicator = 2;
+  int32 period = 3;
+}

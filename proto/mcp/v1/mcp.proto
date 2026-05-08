@@ -1,0 +1,243 @@
+syntax = "proto3";
+
+package mcp.v1;
+
+option go_package = "github.com/0xarchiviste/lighter-mcp/gen/mcp/v1;mcpv1";
+
+// Transport and services follow https://github.com/0xArchiviste/gRPC-MCP (SPEC.md + proto/mcp/v1/mcp.proto).
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service MCP {
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+  rpc Connect(stream Envelope) returns (stream Envelope);
+
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  rpc CallTool(CallToolRequest) returns (stream CallToolEvent);
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse);
+  rpc ReadResource(ReadResourceRequest) returns (ReadResourceResponse);
+  rpc SubscribeResource(SubscribeResourceRequest) returns (stream ResourceEvent);
+  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
+  rpc GetPrompt(GetPromptRequest) returns (GetPromptResponse);
+  rpc Complete(CompleteRequest) returns (CompleteResponse);
+
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+service AuthDiscovery {
+  rpc GetMetadata(GetMetadataRequest) returns (ProtectedResourceMetadata);
+}
+
+message GetMetadataRequest {}
+
+message ProtectedResourceMetadata {
+  string resource = 1;
+  repeated string authorization_servers = 2;
+  repeated string scopes_supported = 3;
+  string jwks_uri = 4;
+  repeated string bearer_methods_supported = 5;
+}
+
+message ClientInfo {
+  string name = 1;
+  string title = 2;
+  string version = 3;
+}
+
+message ServerInfo {
+  string name = 1;
+  string title = 2;
+  string version = 3;
+}
+
+message CapabilitySet {
+  google.protobuf.Struct values = 1;
+}
+
+message InitializeRequest {
+  string protocol_version = 1;
+  CapabilitySet capabilities = 2;
+  ClientInfo client_info = 3;
+}
+
+message InitializeResponse {
+  string protocol_version = 1;
+  CapabilitySet capabilities = 2;
+  ServerInfo server_info = 3;
+  string instructions = 4;
+  string session_id = 5;
+}
+
+message JsonRpcError {
+  int32 code = 1;
+  string message = 2;
+  google.protobuf.Struct data = 3;
+}
+
+message JsonRpcRequest {
+  string id = 1;
+  google.protobuf.Struct params = 2;
+}
+
+message JsonRpcResponse {
+  string id = 1;
+  oneof outcome {
+    google.protobuf.Struct result = 2;
+    JsonRpcError error = 3;
+  }
+}
+
+message JsonRpcNotification {
+  google.protobuf.Struct params = 1;
+}
+
+message Envelope {
+  string method = 1;
+  string event_id = 2;
+  oneof kind {
+    JsonRpcRequest request = 3;
+    JsonRpcResponse response = 4;
+    JsonRpcNotification notification = 5;
+  }
+}
+
+message Tool {
+  string name = 1;
+  string description = 2;
+  google.protobuf.Struct input_schema = 3;
+}
+
+message Resource {
+  string uri = 1;
+  string name = 2;
+  string description = 3;
+  string mime_type = 4;
+}
+
+message Prompt {
+  string name = 1;
+  string description = 2;
+  repeated PromptArgument arguments = 3;
+}
+
+message PromptArgument {
+  string name = 1;
+  string description = 2;
+  bool required = 3;
+}
+
+message Content {
+  oneof kind {
+    TextContent text = 1;
+    BlobContent blob = 2;
+  }
+}
+
+message TextContent {
+  string text = 1;
+  string mime_type = 2;
+}
+
+message BlobContent {
+  bytes data = 1;
+  string mime_type = 2;
+}
+
+message ListToolsRequest {}
+
+message ListToolsResponse {
+  repeated Tool tools = 1;
+}
+
+message CallToolRequest {
+  string name = 1;
+  google.protobuf.Struct arguments = 2;
+}
+
+message CallToolProgress {
+  uint32 percentage = 1;
+  string message = 2;
+}
+
+message CallToolResult {
+  repeated Content content = 1;
+  bool is_error = 2;
+  google.protobuf.Struct structured_content = 3;
+}
+
+message CallToolEvent {
+  oneof kind {
+    CallToolProgress progress = 1;
+    CallToolResult result = 2;
+    JsonRpcError error = 3;
+  }
+}
+
+message ListResourcesRequest {}
+
+message ListResourcesResponse {
+  repeated Resource resources = 1;
+}
+
+message ReadResourceRequest {
+  string uri = 1;
+}
+
+message ReadResourceResponse {
+  repeated Content contents = 1;
+}
+
+message SubscribeResourceRequest {
+  string uri = 1;
+}
+
+message ResourceEvent {
+  string uri = 1;
+  google.protobuf.Timestamp at = 2;
+  oneof kind {
+    ReadResourceResponse update = 3;
+    JsonRpcError error = 4;
+  }
+}
+
+message ListPromptsRequest {}
+
+message ListPromptsResponse {
+  repeated Prompt prompts = 1;
+}
+
+message GetPromptRequest {
+  string name = 1;
+  google.protobuf.Struct arguments = 2;
+}
+
+message GetPromptResponse {
+  string description = 1;
+  repeated Content messages = 2;
+}
+
+message CompleteRequest {
+  string ref = 1;
+  string argument_name = 2;
+  string value = 3;
+}
+
+message CompleteResponse {
+  repeated string values = 1;
+  uint32 total = 2;
+  bool has_more = 3;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  google.protobuf.Timestamp server_time = 1;
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {
+  bool accepted = 1;
+}

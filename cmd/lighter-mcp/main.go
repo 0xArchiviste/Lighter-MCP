@@ -1,58 +1,33 @@
-// Command lighter-mcp is a Model Context Protocol server for Lighter.xyz (stdio transport).
+// Command lighter-mcp serves Lighter.xyz over stdio MCP and/or gRPC (gRPC-MCP + SDK).
 package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
+	"flag"
 	"log"
+	"net"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/0xarchiviste/lighter-mcp/pkg/account"
-	"github.com/0xarchiviste/lighter-mcp/pkg/api"
+	mcpv1 "github.com/0xarchiviste/lighter-mcp/gen/mcp/v1"
+	lighv1 "github.com/0xarchiviste/lighter-mcp/gen/lighter/v1"
 	"github.com/0xarchiviste/lighter-mcp/pkg/config"
-	"github.com/0xarchiviste/lighter-mcp/pkg/indicators"
-	"github.com/0xarchiviste/lighter-mcp/pkg/markets"
-	"github.com/0xarchiviste/lighter-mcp/pkg/positions"
-	"github.com/0xarchiviste/lighter-mcp/pkg/signer"
-	tpsl "github.com/0xarchiviste/lighter-mcp/pkg/tp-sl"
+	"github.com/0xarchiviste/lighter-mcp/pkg/grpcmcp"
+	"github.com/0xarchiviste/lighter-mcp/pkg/lighterapp"
+	"github.com/0xarchiviste/lighter-mcp/pkg/sdkgrpc"
+	grpcauth "github.com/0xArchiviste/gRPC-MCP/pkg/auth"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc"
 )
 
-// lighterApp wires Lighter API clients for MCP tool handlers.
-type lighterApp struct {
-	cfg              config.Config
-	apiClient        *api.Client
-	signer           *signer.Signer
-	orderClient      *account.OrderPlacementClient
-	positionsClient  *positions.PositionsClient
-	tpslClient       *tpsl.TPSLClient
-	indicatorService *indicators.IndicatorService
-}
-
-func (a *lighterApp) authToken(ctx context.Context) (string, error) {
-	return a.signer.CreateAuthTokenWithExpiry(ctx, 3600)
-}
-
-func jsonResult(v any) (*mcp.CallToolResult, any, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return nil, nil, err
-	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
-	}, nil, nil
-}
-
-func errResult(format string, args ...any) (*mcp.CallToolResult, any, error) {
-	msg := fmt.Sprintf(format, args...)
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
-		IsError: true,
-	}, nil, nil
-}
-
 func main() {
+	var (
+		transport = flag.String("transport", "stdio", "stdio (default) or grpc")
+		grpcAddr  = flag.String("grpc-addr", "127.0.0.1:9090", "listen address when -transport=grpc")
+		grpcAuth  = flag.String("grpc-auth", "none", "grpc auth: none|bearer|apikey (uses gRPC-MCP pkg/auth)")
+		apiKey    = flag.String("grpc-api-key", "dev-key", "expected x-mcp-api-key when -grpc-auth=apikey")
+	)
+	flag.Parse()
+
 	cfg := config.Load()
 	if cfg.APIKeyPrivateKey == "" {
 		log.Fatal("LIGHTER_API_KEY_PRIVATE_KEY is required")
@@ -61,274 +36,105 @@ func main() {
 		log.Fatal("LIGHTER_ACCOUNT_INDEX must be set to a non-zero account index")
 	}
 
-	apiClient := api.New(cfg)
-	s, err := signer.New(signer.Config{
-		BaseURL:          cfg.BaseURL,
-		APIKeyPrivateKey: cfg.APIKeyPrivateKey,
-		AccountIndex:     cfg.AccountIndex,
-		APIKeyIndex:      cfg.APIKeyIndex,
-	})
+	app, err := lighterapp.NewApp(cfg)
 	if err != nil {
-		log.Fatalf("signer: %v", err)
-	}
-	s.SetNonceProvider(apiClient)
-
-	orderClient, err := account.NewOrderPlacementClient(apiClient, cfg)
-	if err != nil {
-		log.Fatalf("order client: %v", err)
-	}
-	positionsClient, err := positions.NewPositionsClient(apiClient, cfg)
-	if err != nil {
-		log.Fatalf("positions client: %v", err)
-	}
-	tpslClient, err := tpsl.NewTPSLClient(apiClient, cfg)
-	if err != nil {
-		log.Fatalf("tp/sl client: %v", err)
+		log.Fatalf("app: %v", err)
 	}
 
-	app := &lighterApp{
-		cfg:              cfg,
-		apiClient:        apiClient,
-		signer:           s,
-		orderClient:      orderClient,
-		positionsClient:  positionsClient,
-		tpslClient:       tpslClient,
-		indicatorService: indicators.NewIndicatorService(apiClient),
+	switch *transport {
+	case "stdio":
+		runStdio(app)
+	case "grpc":
+		runGRPC(app, *grpcAddr, *grpcAuth, *apiKey)
+	default:
+		log.Fatalf("unknown -transport %q (use stdio or grpc)", *transport)
 	}
+}
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "lighter-mcp", Version: "0.1.0"}, nil)
-
-	type empty struct{}
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_get_balance",
-		Description: "Fetch collateral, balances, and high-level account info for the configured Lighter account index.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		idx := app.cfg.AccountIndex
-		data, err := account.NewClient(app.apiClient).GetBalance(ctx, &idx, tok)
-		if err != nil {
-			return errResult("get balance: %v", err)
-		}
-		return jsonResult(data)
-	})
-
-	type listMarketsArgs struct {
-		Limit int `json:"limit,omitempty" jsonschema:"maximum number of markets with prices to return (default 10)"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_list_markets",
-		Description: "List markets with recent price data from Lighter.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listMarketsArgs) (*mcp.CallToolResult, any, error) {
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		limit := in.Limit
-		if limit <= 0 {
-			limit = 10
-		}
-		list, err := markets.NewClient(app.apiClient).GetMarketsWithPrices(ctx, tok, limit)
-		if err != nil {
-			return errResult("list markets: %v", err)
-		}
-		return jsonResult(list)
-	})
-
-	type getMarketArgs struct {
-		Symbol string `json:"symbol" jsonschema:"market symbol e.g. ETH or BTC"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_get_market",
-		Description: "Get one market by symbol including price fields.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getMarketArgs) (*mcp.CallToolResult, any, error) {
-		if in.Symbol == "" {
-			return errResult("symbol is required")
-		}
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		mkt, err := markets.NewClient(app.apiClient).GetMarketWithPrices(ctx, in.Symbol, tok)
-		if err != nil {
-			return errResult("get market: %v", err)
-		}
-		return jsonResult(mkt)
-	})
-
-	type listPositionsArgs struct {
-		Market string `json:"market,omitempty" jsonschema:"optional market symbol to filter positions"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_list_positions",
-		Description: "List open positions for the configured account, optionally filtered by market symbol.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listPositionsArgs) (*mcp.CallToolResult, any, error) {
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		pos, err := app.positionsClient.ListPositions(ctx, in.Market, tok)
-		if err != nil {
-			return errResult("list positions: %v", err)
-		}
-		return jsonResult(pos)
-	})
-
-	type placeOrderArgs struct {
-		Market string  `json:"market" jsonschema:"market symbol e.g. ETH"`
-		Side   string  `json:"side" jsonschema:"buy or sell"`
-		Price  float64 `json:"price" jsonschema:"limit price"`
-		Size   float64 `json:"size" jsonschema:"order size in base asset"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_place_limit_order",
-		Description: "Place a good-till-time limit order on a market.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in placeOrderArgs) (*mcp.CallToolResult, any, error) {
-		if in.Market == "" || in.Side == "" {
-			return errResult("market and side are required")
-		}
-		var side account.OrderSide
-		switch in.Side {
-		case "buy", "BUY":
-			side = account.OrderSideBuy
-		case "sell", "SELL":
-			side = account.OrderSideSell
-		default:
-			return errResult("side must be buy or sell")
-		}
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		tx, err := app.orderClient.PlaceOrder(ctx, in.Market, side, account.OrderTypeLimit, in.Price, in.Size, 0, account.TIFGTT, 0, 0, tok)
-		if err != nil {
-			return errResult("place order: %v", err)
-		}
-		return jsonResult(map[string]string{"tx_hash": tx})
-	})
-
-	type cancelOrderArgs struct {
-		Market           string `json:"market" jsonschema:"market symbol"`
-		ClientOrderIndex int64  `json:"client_order_index" jsonschema:"client order index to cancel"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_cancel_order",
-		Description: "Cancel an open order by client order index.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in cancelOrderArgs) (*mcp.CallToolResult, any, error) {
-		if in.Market == "" {
-			return errResult("market is required")
-		}
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		tx, err := app.orderClient.CancelOrder(ctx, in.Market, in.ClientOrderIndex, tok)
-		if err != nil {
-			return errResult("cancel order: %v", err)
-		}
-		return jsonResult(map[string]string{"tx_hash": tx})
-	})
-
-	type tpslArgs struct {
-		Market  string  `json:"market" jsonschema:"market symbol"`
-		TpPrice float64 `json:"tp_price" jsonschema:"take profit price"`
-		SlPrice float64 `json:"sl_price" jsonschema:"stop loss price"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_set_tp_sl",
-		Description: "Set take-profit and stop-loss orders sized to the current position.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in tpslArgs) (*mcp.CallToolResult, any, error) {
-		if in.Market == "" {
-			return errResult("market is required")
-		}
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		hashes, err := app.tpslClient.SetTPSL(ctx, in.Market, in.TpPrice, in.SlPrice, tok)
-		if err != nil {
-			return errResult("set tp/sl: %v", err)
-		}
-		out := map[string]string{}
-		if len(hashes) > 0 {
-			out["tp_tx_hash"] = hashes[0]
-		}
-		if len(hashes) > 1 {
-			out["sl_tx_hash"] = hashes[1]
-		}
-		return jsonResult(out)
-	})
-
-	type closeArgs struct {
-		Market string `json:"market" jsonschema:"market symbol to close"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_close_position",
-		Description: "Close an open position on a market (sends reducing order flow via Lighter API).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in closeArgs) (*mcp.CallToolResult, any, error) {
-		if in.Market == "" {
-			return errResult("market is required")
-		}
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		tx, err := app.positionsClient.ClosePosition(ctx, in.Market, tok)
-		if err != nil {
-			return errResult("close position: %v", err)
-		}
-		return jsonResult(map[string]string{"tx_hash": tx})
-	})
-
-	type indicatorArgs struct {
-		Market    string `json:"market" jsonschema:"market symbol"`
-		Indicator string `json:"indicator" jsonschema:"one of: rsi, macd, sma, ema, bollinger, atr, all"`
-		Period    int    `json:"period,omitempty" jsonschema:"lookback period where applicable (default 14)"`
-	}
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "lighter_calculate_indicator",
-		Description: "Compute technical indicators from recent Lighter candle history.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in indicatorArgs) (*mcp.CallToolResult, any, error) {
-		if in.Market == "" || in.Indicator == "" {
-			return errResult("market and indicator are required")
-		}
-		period := in.Period
-		if period <= 0 {
-			period = 14
-		}
-		tok, err := app.authToken(ctx)
-		if err != nil {
-			return errResult("auth: %v", err)
-		}
-		var result any
-		switch in.Indicator {
-		case "rsi":
-			result, err = app.indicatorService.CalculateRSI(ctx, in.Market, period, tok)
-		case "macd":
-			result, err = app.indicatorService.CalculateMACD(ctx, in.Market, tok)
-		case "sma":
-			result, err = app.indicatorService.CalculateMovingAverage(ctx, in.Market, period, tok)
-		case "ema":
-			result, err = app.indicatorService.CalculateEMA(ctx, in.Market, period, tok)
-		case "bollinger":
-			result, err = app.indicatorService.CalculateBollingerBands(ctx, in.Market, period, tok)
-		case "atr":
-			result, err = app.indicatorService.CalculateATR(ctx, in.Market, period, tok)
-		case "all":
-			result, err = app.indicatorService.CalculateAllIndicators(ctx, in.Market, tok)
-		default:
-			return errResult("unknown indicator: %s", in.Indicator)
-		}
-		if err != nil {
-			return errResult("indicator: %v", err)
-		}
-		return jsonResult(result)
-	})
-
+func runStdio(app *lighterapp.App) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "lighter-mcp", Version: "0.2.0"}, nil)
+	lighterapp.RegisterStdioTools(server, app)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+func runGRPC(app *lighterapp.App, addr, authMode, apiKey string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+
+	backend := grpcmcp.NewLighterBackend(app)
+	authMeta := &mcpv1.ProtectedResourceMetadata{
+		Resource:               "lighter-mcp-grpc://" + addr,
+		AuthorizationServers:   []string{"https://issuer.example.com"},
+		ScopesSupported:        []string{"mcp:tools.call", "mcp:tools.list", "mcp:resources.read", "lighter:rpc"},
+		JwksUri:                "https://issuer.example.com/.well-known/jwks.json",
+		BearerMethodsSupported: []string{"header"},
+	}
+	mcpSvc := grpcmcp.NewService(backend, authMeta)
+
+	policies := map[string]grpcauth.AuthPolicy{
+		mcpv1.MCP_ListTools_FullMethodName:         {Method: mcpv1.MCP_ListTools_FullMethodName, RequiredScopes: []string{"mcp:tools.list"}},
+		mcpv1.MCP_CallTool_FullMethodName:         {Method: mcpv1.MCP_CallTool_FullMethodName, RequiredScopes: []string{"mcp:tools.call"}},
+		mcpv1.MCP_ListResources_FullMethodName:    {Method: mcpv1.MCP_ListResources_FullMethodName, RequiredScopes: []string{"mcp:resources.read"}},
+		mcpv1.MCP_ReadResource_FullMethodName:     {Method: mcpv1.MCP_ReadResource_FullMethodName, RequiredScopes: []string{"mcp:resources.read"}},
+		mcpv1.MCP_SubscribeResource_FullMethodName: {Method: mcpv1.MCP_SubscribeResource_FullMethodName, RequiredScopes: []string{"mcp:resources.read"}},
+		lighv1.Lighter_GetBalance_FullMethodName:         {Method: lighv1.Lighter_GetBalance_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_ListMarkets_FullMethodName:        {Method: lighv1.Lighter_ListMarkets_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_GetMarket_FullMethodName:          {Method: lighv1.Lighter_GetMarket_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_ListPositions_FullMethodName:      {Method: lighv1.Lighter_ListPositions_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_PlaceLimitOrder_FullMethodName:    {Method: lighv1.Lighter_PlaceLimitOrder_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_CancelOrder_FullMethodName:        {Method: lighv1.Lighter_CancelOrder_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_SetTPSL_FullMethodName:            {Method: lighv1.Lighter_SetTPSL_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_ClosePosition_FullMethodName:     {Method: lighv1.Lighter_ClosePosition_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+		lighv1.Lighter_CalculateIndicator_FullMethodName: {Method: lighv1.Lighter_CalculateIndicator_FullMethodName, RequiredScopes: []string{"lighter:rpc"}},
+	}
+
+	cfgAuth := grpcauth.Config{
+		Policies:        policies,
+		AllowInsecure:   authMode == "none" || authMode == "mtls",
+		WWWAuthenticate: `Bearer resource_metadata="mcp.v1.AuthDiscovery/GetMetadata"`,
+	}
+	if authMode == "apikey" {
+		cfgAuth.APIKeys = map[string]string{apiKey: "apikey-user"}
+	}
+	if authMode == "bearer" {
+		cfgAuth.Verifier = &staticVerifier{principal: &grpcauth.Principal{
+			Subject: "bearer-user",
+			Method:  "bearer",
+			Scopes: map[string]struct{}{
+				"mcp:tools.list":     {},
+				"mcp:tools.call":     {},
+				"mcp:resources.read": {},
+				"lighter:rpc":        {},
+				"mcp:*":              {},
+			},
+		}}
+	}
+
+	opts := []grpc.ServerOption{
+		grpc.UnaryInterceptor(grpcauth.UnaryInterceptor(cfgAuth)),
+		grpc.StreamInterceptor(grpcauth.StreamInterceptor(cfgAuth)),
+	}
+	s := grpc.NewServer(opts...)
+	mcpSvc.Register(s)
+	lighv1.RegisterLighterServer(s, sdkgrpc.NewServer(app))
+
+	log.Printf("lighter-mcp gRPC listening on %s (auth=%s) — MCP per github.com/0xArchiviste/gRPC-MCP + lighter.v1.Lighter SDK", addr, authMode)
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("grpc: %v", err)
+	}
+}
+
+type staticVerifier struct {
+	principal *grpcauth.Principal
+}
+
+func (v *staticVerifier) VerifyBearer(_ context.Context, token string) (*grpcauth.Principal, error) {
+	if token == "" {
+		return nil, errors.New("empty bearer token")
+	}
+	return v.principal, nil
 }
