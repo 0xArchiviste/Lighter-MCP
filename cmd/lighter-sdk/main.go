@@ -13,6 +13,7 @@ import (
 	"github.com/0xarchiviste/lighter-mcp/pkg/config"
 	"github.com/0xarchiviste/lighter-mcp/pkg/lighterapp"
 	"github.com/0xarchiviste/lighter-mcp/pkg/lightergrpc"
+	"github.com/0xarchiviste/lighter-mcp/pkg/walletstore"
 	"github.com/spf13/cobra"
 )
 
@@ -23,13 +24,17 @@ func ensureApp() error {
 		return nil
 	}
 	cfg := config.Load()
+	var err error
+	cfg, err = walletstore.Resolve(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
 	if cfg.APIKeyPrivateKey == "" {
-		return fmt.Errorf("LIGHTER_API_KEY_PRIVATE_KEY is required")
+		return fmt.Errorf("LIGHTER_API_KEY_PRIVATE_KEY is required (or use LIGHTER_WALLET_BACKEND=supabase with wallet env)")
 	}
 	if cfg.AccountIndex == 0 {
-		return fmt.Errorf("LIGHTER_ACCOUNT_INDEX must be non-zero")
+		return fmt.Errorf("LIGHTER_ACCOUNT_INDEX must be non-zero (or select a supabase wallet row)")
 	}
-	var err error
 	app, err = lighterapp.NewApp(cfg)
 	return err
 }
@@ -76,6 +81,10 @@ var rootCmd = &cobra.Command{
 	Use:   "lighter-sdk",
 	Short: "Lighter.xyz SDK CLI (same config as lighter-mcp)",
 	Long: `Commands call Lighter with LIGHTER_* credentials from the environment (and optional .env).
+
+Multi-wallet (Supabase): set LIGHTER_WALLET_BACKEND=supabase, LIGHTER_WALLET_ID or LIGHTER_WALLET_NAME,
+LIGHTER_WALLET_MASTER_PASSWORD, LIGHTER_WALLET_UNLOCK_PASSWORD, and LIGHTER_SUPABASE_URL + LIGHTER_SUPABASE_SERVICE_KEY
+(or SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY). Use "lighter-sdk wallet" to add/list/delete encrypted rows.
 
 For the same operations over gRPC (lighter.v1.Lighter + gRPC-MCP), run:
   lighter-mcp -transport=grpc -grpc-addr=127.0.0.1:9090`,

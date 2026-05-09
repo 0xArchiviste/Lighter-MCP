@@ -9,6 +9,7 @@ import (
 	"github.com/0xarchiviste/lighter-mcp/pkg/config"
 	"github.com/0xarchiviste/lighter-mcp/pkg/lighterapp"
 	"github.com/0xarchiviste/lighter-mcp/pkg/lightergrpc"
+	"github.com/0xarchiviste/lighter-mcp/pkg/walletstore"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -22,14 +23,20 @@ func main() {
 	flag.Parse()
 
 	cfg := config.Load()
+	var err error
+	cfg, err = walletstore.Resolve(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("wallet resolve: %v", err)
+	}
 	if cfg.APIKeyPrivateKey == "" {
-		log.Fatal("LIGHTER_API_KEY_PRIVATE_KEY is required")
+		log.Fatal("LIGHTER_API_KEY_PRIVATE_KEY is required (or use LIGHTER_WALLET_BACKEND=supabase with wallet env)")
 	}
 	if cfg.AccountIndex == 0 {
-		log.Fatal("LIGHTER_ACCOUNT_INDEX must be set to a non-zero account index")
+		log.Fatal("LIGHTER_ACCOUNT_INDEX must be set to a non-zero account index (or select a supabase wallet row)")
 	}
 
-	app, err := lighterapp.NewApp(cfg)
+	var app *lighterapp.App
+	app, err = lighterapp.NewApp(cfg)
 	if err != nil {
 		log.Fatalf("app: %v", err)
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -15,6 +16,15 @@ type Config struct {
 	APIKeyPrivateKey string
 	ETHPrivateKey    string // Optional; used by some account flows outside MCP
 	ChainID          uint32 // Lighter chain ID (default: 304 for mainnet)
+
+	// WalletBackend: "" or "env" uses LIGHTER_* secrets below. "supabase" loads an encrypted row.
+	WalletBackend          string
+	SupabaseURL            string
+	SupabaseServiceKey     string
+	WalletMasterPassword   string // Prefer env LIGHTER_WALLET_MASTER_PASSWORD; never log.
+	WalletUnlockPassword   string // Runtime unlock; prefer env LIGHTER_WALLET_UNLOCK_PASSWORD.
+	WalletID               string // UUID of row in lighter_wallet
+	WalletName             string // Unique wallet name (alternative to ID)
 }
 
 func getenv(key, def string) string {
@@ -34,6 +44,11 @@ func Load() Config {
 	_ = godotenv.Load()
 	_ = godotenv.Load(".env")
 
+	backend := strings.TrimSpace(strings.ToLower(getenv("LIGHTER_WALLET_BACKEND", "")))
+	if backend == "" {
+		backend = "env"
+	}
+
 	return Config{
 		BaseURL:          getenv("LIGHTER_BASE_URL", "https://mainnet.zklighter.elliot.ai"),
 		AccountIndex:     parseUint32(getenv("LIGHTER_ACCOUNT_INDEX", "0")),
@@ -41,5 +56,13 @@ func Load() Config {
 		APIKeyPrivateKey: getenv("LIGHTER_API_KEY_PRIVATE_KEY", ""),
 		ETHPrivateKey:    getenv("LIGHTER_ETH_PRIVATE_KEY", ""),
 		ChainID:          parseUint32(getenv("LIGHTER_CHAIN_ID", "304")),
+
+		WalletBackend:        backend,
+		SupabaseURL:          getenv("LIGHTER_SUPABASE_URL", ""),
+		SupabaseServiceKey:   getenv("LIGHTER_SUPABASE_SERVICE_KEY", ""),
+		WalletMasterPassword: getenv("LIGHTER_WALLET_MASTER_PASSWORD", ""),
+		WalletUnlockPassword: getenv("LIGHTER_WALLET_UNLOCK_PASSWORD", ""),
+		WalletID:             getenv("LIGHTER_WALLET_ID", ""),
+		WalletName:           getenv("LIGHTER_WALLET_NAME", ""),
 	}
 }
