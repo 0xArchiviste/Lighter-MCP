@@ -9,6 +9,7 @@ proto:
 .PHONY: test build
 build:
 	go build -o lighter-mcp ./cmd/lighter-mcp
+	go build -o lighter-sdk ./cmd/lighter-sdk
 
 test:
 	go test ./...

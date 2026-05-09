@@ -10,6 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.6.0
+	github.com/spf13/cobra v1.10.1
 	google.golang.org/grpc v1.81.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -27,8 +28,10 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/supranational/blst v0.3.16-0.20250831170142-f48500c1fdbe // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
