@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -43,17 +44,17 @@ type WSMessage struct {
 
 // SubscriptionMessage represents a subscription request
 type SubscriptionMessage struct {
-	Method string      `json:"method"`
-	Params interface{} `json:"params,omitempty"`
-	Channel string     `json:"channel,omitempty"`
-	Topic   string     `json:"topic,omitempty"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params,omitempty"`
+	Channel string      `json:"channel,omitempty"`
+	Topic   string      `json:"topic,omitempty"`
 }
 
 // OrderbookSnapshot represents orderbook data from WebSocket
 type OrderbookSnapshot struct {
-	Market string      `json:"market"`
-	Bids   [][]string  `json:"bids"` // [price, size]
-	Asks   [][]string  `json:"asks"` // [price, size]
+	Market string     `json:"market"`
+	Bids   [][]string `json:"bids"` // [price, size]
+	Asks   [][]string `json:"asks"` // [price, size]
 }
 
 // TradeUpdate represents a trade from WebSocket
@@ -65,8 +66,9 @@ type TradeUpdate struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// NewClient creates a new WebSocket client
-func NewClient(baseURL string, authToken string) *Client {
+// NewClient creates a new WebSocket client. proxy is optional; when set, the
+// dial stays on that proxy for the life of the connection.
+func NewClient(baseURL string, authToken string, proxy *url.URL) *Client {
 	// Convert HTTP(S) URL to WebSocket URL
 	wsURL := baseURL
 	if len(wsURL) >= 5 && wsURL[:5] == "https" {
@@ -74,7 +76,7 @@ func NewClient(baseURL string, authToken string) *Client {
 	} else if len(wsURL) >= 4 && wsURL[:4] == "http" {
 		wsURL = "ws" + wsURL[4:]
 	}
-	
+
 	// Default WebSocket endpoint
 	if wsURL[len(wsURL)-1] != '/' {
 		wsURL += "/"
@@ -83,12 +85,20 @@ func NewClient(baseURL string, authToken string) *Client {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	handshake := 10 * time.Second
+	if proxy != nil {
+		handshake = 20 * time.Second
+	}
+
 	return &Client{
-		baseURL:    baseURL,
-		wsURL:      wsURL,
-		authToken:  authToken,
+		baseURL:   baseURL,
+		wsURL:     wsURL,
+		authToken: authToken,
 		dialer: &websocket.Dialer{
-			HandshakeTimeout: 10 * time.Second,
+			HandshakeTimeout: handshake,
+			Proxy: func(*http.Request) (*url.URL, error) {
+				return proxy, nil
+			},
 		},
 		handlers:   make(map[string]MessageHandler),
 		reconnect:  true,
@@ -230,23 +240,23 @@ func (c *Client) Subscribe(channel string, subscription interface{}, handler Mes
 	// Try different subscription message formats
 	subMsgs := []interface{}{
 		SubscriptionMessage{
-			Method: "subscribe",
+			Method:  "subscribe",
 			Channel: channel,
-			Params: subscription,
+			Params:  subscription,
 		},
 		SubscriptionMessage{
 			Method: "subscribe",
-			Topic: channel,
+			Topic:  channel,
 			Params: subscription,
 		},
 		map[string]interface{}{
-			"method": "subscribe",
+			"method":  "subscribe",
 			"channel": channel,
-			"params": subscription,
+			"params":  subscription,
 		},
 		map[string]interface{}{
 			"method": "subscribe",
-			"topic": channel,
+			"topic":  channel,
 			"params": subscription,
 		},
 		subscription, // Try sending subscription directly
@@ -292,7 +302,7 @@ func (c *Client) Unsubscribe(channel string) error {
 	}
 
 	unsubMsg := map[string]interface{}{
-		"method": "unsubscribe",
+		"method":  "unsubscribe",
 		"channel": channel,
 	}
 
@@ -324,5 +334,3 @@ func (c *Client) IsConnected() bool {
 func (c *Client) SetAuthToken(token string) {
 	c.authToken = token
 }
-
-

@@ -57,9 +57,9 @@ func (c *Client) GetMarket(ctx context.Context, identifier string, authToken str
 
 	// Try partial match (e.g., "ETH" matches "ETH-USD")
 	for _, market := range marketsList {
-		if market.Name == identifier || 
-		   strings.HasPrefix(market.Name, identifier+"-") ||
-		   strings.HasPrefix(market.Name, identifier+"_") {
+		if market.Name == identifier ||
+			strings.HasPrefix(market.Name, identifier+"-") ||
+			strings.HasPrefix(market.Name, identifier+"_") {
 			return &market, nil
 		}
 	}
@@ -168,7 +168,7 @@ func (c *Client) getMarketsFromOrderbooks(ctx context.Context, authToken string)
 				return markets, nil
 			}
 		}
-		
+
 		// Fallback: if response is a map, try extracting markets from keys (excluding metadata keys)
 		markets := make([]Market, 0)
 		for key, value := range responseMap {
@@ -238,11 +238,11 @@ func (c *Client) discoverMarketsByTrying(ctx context.Context, authToken string) 
 	}
 
 	discoveredMarkets := make([]Market, 0)
-	
+
 	// Create a context with timeout for each individual request
 	requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	
+
 	// Try each market name to see if it exists (limit to first few to avoid long delays)
 	for i, marketName := range commonMarkets {
 		if i >= 5 { // Only try first 5 to avoid long delays
@@ -279,7 +279,7 @@ func parseMarketsFromArray(data []interface{}) []Market {
 			})
 		} else if marketMap, ok := item.(map[string]interface{}); ok {
 			market := Market{}
-			
+
 			// Extract name
 			if name, ok := marketMap["name"].(string); ok {
 				market.Name = name
@@ -288,14 +288,14 @@ func parseMarketsFromArray(data []interface{}) []Market {
 			} else if marketName, ok := marketMap["market"].(string); ok {
 				market.Name = marketName
 			}
-			
+
 			// Extract market ID
 			if id, ok := marketMap["id"].(float64); ok {
 				market.MarketID = uint32(id)
 			} else if id, ok := marketMap["market_id"].(float64); ok {
 				market.MarketID = uint32(id)
 			}
-			
+
 			markets = append(markets, market)
 		}
 	}
@@ -340,12 +340,12 @@ func (c *Client) GetMarketsWithPrices(ctx context.Context, authToken string, lim
 
 		// Parse orderbook to extract prices
 		c.extractPricesFromOrderbook(orderbook, &markets[i])
-		
+
 		// Try to fetch bid/ask from orderBookOrders endpoint (requires market_id)
 		if markets[i].MarketID != 0 || markets[i].Name != "" {
 			c.extractBidAskFromOrderBookOrders(ctx, &markets[i], authToken)
 		}
-		
+
 		// Add delay between requests (except for the last one)
 		if i < len(markets)-1 {
 			time.Sleep(delay)
@@ -433,14 +433,14 @@ func (c *Client) extractPricesFromOrderBooksBulk(orderBooksData json.RawMessage,
 // matchAndExtractPrices matches an orderbook entry to a market and extracts prices
 func (c *Client) matchAndExtractPrices(obMap map[string]interface{}, marketMap map[string]*Market) {
 	var market *Market
-	
+
 	// Find market by symbol/name
 	if symbol, ok := obMap["symbol"].(string); ok {
 		if m, exists := marketMap[symbol]; exists {
 			market = m
 		}
 	}
-	
+
 	// Or find by market_id
 	if market == nil {
 		if marketID, ok := obMap["market_id"].(float64); ok {
@@ -488,12 +488,12 @@ func (c *Client) GetMarketsWithPricesWebSocket(ctx context.Context, authToken st
 
 		// Parse orderbook to extract prices
 		c.extractPricesFromOrderbook(orderbook, &marketsWithStats[i])
-		
+
 		// Try to fetch bid/ask from orderBookOrders endpoint
 		if marketsWithStats[i].MarketID != 0 || marketsWithStats[i].Name != "" {
 			c.extractBidAskFromOrderBookOrders(ctx, &marketsWithStats[i], authToken)
 		}
-		
+
 		// Add delay between requests (except for the last one)
 		if i < len(marketsWithStats)-1 {
 			time.Sleep(delay)
@@ -508,12 +508,12 @@ func (c *Client) GetMarketsWithPricesWebSocket(ctx context.Context, authToken st
 
 	// Now try to enhance with WebSocket bid/ask prices
 	baseURL := c.apiClient.BaseURL()
-	wsClient := ws.NewClient(baseURL, authToken)
-	
+	wsClient := ws.NewClient(baseURL, authToken, c.apiClient.NextProxy())
+
 	// Connect to WebSocket (non-blocking, with timeout)
 	wsCtx, wsCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wsCancel()
-	
+
 	wsConnected := make(chan error, 1)
 	go func() {
 		wsConnected <- wsClient.Connect()
@@ -533,7 +533,7 @@ func (c *Client) GetMarketsWithPricesWebSocket(ctx context.Context, authToken st
 
 	// Create orderbook manager
 	orderbookManager := ws.NewOrderbookManager(wsClient, c.apiClient)
-	
+
 	// Start orderbook manager (subscribes to orderbook channels)
 	if err := orderbookManager.Start(ctx); err != nil {
 		// If orderbook manager fails, return REST data
@@ -603,7 +603,6 @@ func (c *Client) enhanceWithWebSocketPrices(marketsList []Market, orderbookManag
 	return marketsList
 }
 
-
 // extractPricesFromWebSocketOrderbook extracts prices from WebSocket orderbook snapshot
 func (c *Client) extractPricesFromWebSocketOrderbook(ob *ws.OrderbookSnapshot, market *Market) {
 	// Extract best bid
@@ -651,14 +650,14 @@ func (c *Client) extractPricesFromOrderbook(orderbook json.RawMessage, market *M
 			if obDetail, ok := obItem.(map[string]interface{}); ok {
 				// Check if this orderbook matches our market
 				matches := false
-				
+
 				// Match by symbol/name
 				if symbol, ok := obDetail["symbol"].(string); ok {
 					if symbol == market.Name {
 						matches = true
 					}
 				}
-				
+
 				// Match by market_id
 				if !matches {
 					if marketID, ok := obDetail["market_id"].(float64); ok {
@@ -667,7 +666,7 @@ func (c *Client) extractPricesFromOrderbook(orderbook json.RawMessage, market *M
 						}
 					}
 				}
-				
+
 				// If no match criteria found, use first entry (backward compatibility)
 				if matches || (len(orderBookDetailsArray) == 1) {
 					c.extractPricesFromOrderBookDetail(obDetail, market)
@@ -677,7 +676,7 @@ func (c *Client) extractPricesFromOrderbook(orderbook json.RawMessage, market *M
 				}
 			}
 		}
-		
+
 		// If no match found, fall back to first entry (shouldn't happen, but for safety)
 		if obDetail, ok := orderBookDetailsArray[0].(map[string]interface{}); ok {
 			c.extractPricesFromOrderBookDetail(obDetail, market)
@@ -805,7 +804,7 @@ func (c *Client) extractBidAskFromOrderBookOrders(ctx context.Context, market *M
 
 	// Use the shared extraction function
 	c.extractBidAskFromResponse(responseMap, market)
-	
+
 	// Also check if response has a nested structure (e.g., {"data": {"bids": [...], "asks": [...]}})
 	if data, ok := responseMap["data"].(map[string]interface{}); ok {
 		c.extractBidAskFromResponse(data, market)
@@ -817,4 +816,3 @@ func (c *Client) extractBidAskFromOrderBookOrders(ctx context.Context, market *M
 		c.extractBidAskFromResponse(orderbook, market)
 	}
 }
-

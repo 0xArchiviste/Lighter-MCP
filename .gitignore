@@ -6,3 +6,4 @@
 .vscode/
 *.env
 .DS_Store
+proxies.txt

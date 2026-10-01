@@ -12,29 +12,67 @@ import (
 	"strings"
 	"time"
 
-	lighterclient "github.com/elliottech/lighter-go/client"
-	lighterhttp "github.com/elliottech/lighter-go/client/http"
 	"github.com/0xarchiviste/lighter-mcp/pkg/config"
+	"github.com/0xarchiviste/lighter-mcp/pkg/proxyrot"
+	lighterclient "github.com/elliottech/lighter-go/client"
 )
 
 type Client struct {
 	cfg     config.Config
 	client  *http.Client
 	baseURL string
-	// Official SDK HTTP client (wraps MinimalHTTPClient)
+	proxies *proxyrot.Pool
+	// SDK HTTP client. Uses the same transport as client, including proxy rotation.
 	sdkClient lighterclient.MinimalHTTPClient
 }
 
 func New(cfg config.Config) *Client {
-	// Create official SDK HTTP client wrapper
-	sdkClient := lighterhttp.NewClient(cfg.BaseURL)
+	hc := &http.Client{Timeout: 15 * time.Second}
+	var pool *proxyrot.Pool
+	if p, path, err := loadProxies(cfg.ProxyFile); err != nil {
+		fmt.Fprintf(os.Stderr, "[proxy] %v\n", err)
+	} else if p != nil {
+		pool = p
+		hc = proxyrot.Client(p, 30*time.Second)
+		fmt.Fprintf(os.Stderr, "[proxy] rotating %d proxies from %s\n", p.Len(), path)
+	}
+
+	var sdkClient lighterclient.MinimalHTTPClient
+	if cfg.BaseURL != "" {
+		sdkClient = &sdkHTTP{endpoint: cfg.BaseURL, http: hc}
+	}
 
 	return &Client{
 		cfg:       cfg,
-		client:    &http.Client{Timeout: 15 * time.Second},
+		client:    hc,
 		baseURL:   cfg.BaseURL,
+		proxies:   pool,
 		sdkClient: sdkClient,
 	}
+}
+
+// loadProxies opens cfg path, or proxies.txt when unset. A missing default file
+// means direct connections. An explicit path that cannot be read is an error.
+func loadProxies(path string) (*proxyrot.Pool, string, error) {
+	if path == "" {
+		path = "proxies.txt"
+	}
+	p, err := proxyrot.LoadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) && (path == "proxies.txt") {
+			return nil, path, nil
+		}
+		return nil, path, err
+	}
+	return p, path, nil
+}
+
+// NextProxy returns the next proxy URL for a new connection, or nil for a direct dial.
+func (c *Client) NextProxy() *url.URL {
+	if c.proxies == nil {
+		return nil
+	}
+	return c.proxies.NextURL()
 }
 
 // GetSDKClient returns the SDK HTTP client
@@ -63,12 +101,12 @@ func (c *Client) setAuthHeader(req *http.Request, authToken string) {
 			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", authToken))
 			if strings.Contains(req.URL.Path, "order") || strings.Contains(req.URL.Path, "Order") {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Setting Authorization header for orders endpoint (format: Bearer, length: %d)\n", len(authToken))
+			}
 		}
-	}
 	} else {
 		fmt.Fprintf(os.Stderr, "[WARNING] No auth token provided for request to %s\n", req.URL.Path)
 	}
-	
+
 	// Set headers to match the curl example exactly (for nextNonce endpoint)
 	// These headers help ensure the request matches the frontend format
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0")
@@ -105,9 +143,9 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 
 	// Set Content-Type only for POST/PUT requests with body (curl example doesn't set it for GET)
 	if body != nil && (method == "POST" || method == "PUT") {
-	req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/json")
 	}
-	
+
 	// Always set auth header and browser-like headers (matching curl example exactly)
 	if authToken != "" {
 		c.setAuthHeader(req, authToken)
@@ -177,18 +215,18 @@ func (c *Client) NextNonce(ctx context.Context) (uint64, error) {
 
 	// Try multiple REST endpoint formats
 	endpoints := []string{
-		fmt.Sprintf("api/v1/nextNonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex), // Official SDK format (camelCase)
+		fmt.Sprintf("api/v1/nextNonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex),  // Official SDK format (camelCase)
 		fmt.Sprintf("api/v1/next_nonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex), // Snake case format
-		fmt.Sprintf("/v1/next_nonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex), // Legacy format
+		fmt.Sprintf("/v1/next_nonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex),    // Legacy format
 	}
 
 	var lastErr error
 	for _, endpoint := range endpoints {
 		resp, err := c.doRequest(ctx, "GET", endpoint, nil, "")
 		if err == nil {
-	var result struct {
-		Nonce uint64 `json:"nonce"`
-	}
+			var result struct {
+				Nonce uint64 `json:"nonce"`
+			}
 			if err := c.parseResponse(resp, &result); err == nil {
 				return result.Nonce, nil
 			}
@@ -212,7 +250,7 @@ func (c *Client) NextNonceWithAuth(ctx context.Context, authToken string) (uint6
 
 	// Use the exact endpoint format from the curl example
 	endpoints := []string{
-		fmt.Sprintf("api/v1/nextNonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex), // Exact curl format
+		fmt.Sprintf("api/v1/nextNonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex),  // Exact curl format
 		fmt.Sprintf("/api/v1/nextNonce?account_index=%d&api_key_index=%d", c.cfg.AccountIndex, c.cfg.APIKeyIndex), // With leading slash
 	}
 
@@ -223,12 +261,12 @@ func (c *Client) NextNonceWithAuth(ctx context.Context, authToken string) (uint6
 			// Read response body to check structure
 			body, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			
+
 			if readErr != nil {
 				errors = append(errors, fmt.Sprintf("%s: failed to read response: %v", endpoint, readErr))
 				continue
 			}
-			
+
 			// Try to parse as expected structure with code field: {"code":200,"nonce":88}
 			var resultWithCode struct {
 				Code  int    `json:"code"`
@@ -238,16 +276,16 @@ func (c *Client) NextNonceWithAuth(ctx context.Context, authToken string) (uint6
 				fmt.Fprintf(os.Stderr, "[DEBUG] Parsed nonce response with code: code=%d, nonce=%d\n", resultWithCode.Code, resultWithCode.Nonce)
 				return resultWithCode.Nonce, nil
 			}
-			
+
 			// Try to parse as expected structure without code field
 			var result struct {
 				Nonce uint64 `json:"nonce"`
 			}
 			if err := json.Unmarshal(body, &result); err == nil && result.Nonce > 0 {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Parsed nonce response: nonce=%d\n", result.Nonce)
-	return result.Nonce, nil
+				return result.Nonce, nil
 			}
-			
+
 			// Try alternative structure (wrapped response)
 			var wrappedResult struct {
 				Data struct {
@@ -258,14 +296,14 @@ func (c *Client) NextNonceWithAuth(ctx context.Context, authToken string) (uint6
 				fmt.Fprintf(os.Stderr, "[DEBUG] Parsed nonce response wrapped: nonce=%d\n", wrappedResult.Data.Nonce)
 				return wrappedResult.Data.Nonce, nil
 			}
-			
+
 			// Try direct number
 			var directNonce uint64
 			if err := json.Unmarshal(body, &directNonce); err == nil && directNonce > 0 {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Parsed nonce as direct number: nonce=%d\n", directNonce)
 				return directNonce, nil
 			}
-			
+
 			errors = append(errors, fmt.Sprintf("%s: unexpected response format: %s", endpoint, string(body)))
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: %v", endpoint, err))
@@ -300,9 +338,9 @@ func toSnakeCase(s string) string {
 }
 
 type SignedTx struct {
-	Payload   interface{} `json:"payload"`   // Transaction payload object
+	Payload   interface{} `json:"payload"` // Transaction payload object
 	Signature string      `json:"signature"`
-	TxType    interface{} `json:"tx_type"`   // Transaction type (uint8) - required at top level
+	TxType    interface{} `json:"tx_type"` // Transaction type (uint8) - required at top level
 }
 
 // SendTx sends a single signed transaction
@@ -310,7 +348,7 @@ func (c *Client) SendTx(ctx context.Context, tx SignedTx) (string, error) {
 	// If payload is a map, try flattening it (merge payload fields into top level)
 	var body []byte
 	var err error
-	
+
 	if payloadMap, ok := tx.Payload.(map[string]interface{}); ok {
 		// Flatten: merge payload fields into top level and convert to snake_case
 		flatTx := make(map[string]interface{})
@@ -327,7 +365,7 @@ func (c *Client) SendTx(ctx context.Context, tx SignedTx) (string, error) {
 		// Use original structure
 		body, err = json.Marshal(tx)
 	}
-	
+
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal tx: %w", err)
 	}
@@ -337,9 +375,9 @@ func (c *Client) SendTx(ctx context.Context, tx SignedTx) (string, error) {
 
 	// Try multiple endpoint formats (official SDK format first)
 	endpoints := []string{
-		"api/v1/sendTx",  // Official SDK format (camelCase)
-		"api/v1/send_tx", // Snake case format
-		"/api/v1/sendTx", // Alternative format
+		"api/v1/sendTx",   // Official SDK format (camelCase)
+		"api/v1/send_tx",  // Snake case format
+		"/api/v1/sendTx",  // Alternative format
 		"/api/v1/send_tx", // Alternative snake case
 		"/v1/send_tx",     // Legacy format
 	}
@@ -352,26 +390,26 @@ func (c *Client) SendTx(ctx context.Context, tx SignedTx) (string, error) {
 			// Read response body to check structure
 			bodyBytes, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			
+
 			if readErr != nil {
 				errors = append(errors, fmt.Sprintf("%s: failed to read response: %v", endpoint, readErr))
 				continue
 			}
-			
+
 			// Check status code
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				errors = append(errors, fmt.Sprintf("%s: HTTP %d - %s", endpoint, resp.StatusCode, string(bodyBytes)))
 				continue
 			}
-			
+
 			// Try to parse as expected structure
-	var result struct {
-		TxHash string `json:"tx_hash"`
-	}
+			var result struct {
+				TxHash string `json:"tx_hash"`
+			}
 			if err := json.Unmarshal(bodyBytes, &result); err == nil && result.TxHash != "" {
 				return result.TxHash, nil
 			}
-			
+
 			// Try alternative structure (wrapped response)
 			var wrappedResult struct {
 				Data struct {
@@ -381,13 +419,13 @@ func (c *Client) SendTx(ctx context.Context, tx SignedTx) (string, error) {
 			if err := json.Unmarshal(bodyBytes, &wrappedResult); err == nil && wrappedResult.Data.TxHash != "" {
 				return wrappedResult.Data.TxHash, nil
 			}
-			
+
 			// Try direct string
 			var directHash string
 			if err := json.Unmarshal(bodyBytes, &directHash); err == nil && directHash != "" {
 				return directHash, nil
 			}
-			
+
 			errors = append(errors, fmt.Sprintf("%s: unexpected response format: %s", endpoint, string(bodyBytes)))
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: %v", endpoint, err))
@@ -424,9 +462,9 @@ func (c *Client) SendTxBatch(ctx context.Context, txs []SignedTx) ([]string, err
 func (c *Client) OrderBookDetails(ctx context.Context, market string, authToken string) (json.RawMessage, error) {
 	// Try multiple endpoint formats - Python SDK uses camelCase
 	endpoints := []string{
-		fmt.Sprintf("api/v1/orderBookDetails?market=%s", url.QueryEscape(market)), // Official Python SDK format (camelCase)
+		fmt.Sprintf("api/v1/orderBookDetails?market=%s", url.QueryEscape(market)),   // Official Python SDK format (camelCase)
 		fmt.Sprintf("api/v1/order_book_details?market=%s", url.QueryEscape(market)), // Legacy snake_case format
-		fmt.Sprintf("/v1/orderBookDetails?market=%s", url.QueryEscape(market)),    // Legacy format with camelCase
+		fmt.Sprintf("/v1/orderBookDetails?market=%s", url.QueryEscape(market)),      // Legacy format with camelCase
 		fmt.Sprintf("/v1/order_book_details?market=%s", url.QueryEscape(market)),    // Legacy format with snake_case
 		fmt.Sprintf("api/v1/orderbook/%s", url.QueryEscape(market)),                 // Alternative format
 		fmt.Sprintf("/v1/orderbook/%s", url.QueryEscape(market)),                    // Alternative legacy format
@@ -484,12 +522,12 @@ func (c *Client) OrderBookDetails(ctx context.Context, market string, authToken 
 func (c *Client) OrderBooks(ctx context.Context, authToken string) (json.RawMessage, error) {
 	// Try direct endpoints first - Python SDK uses camelCase
 	endpoints := []string{
-		"api/v1/orderBooks",    // Official Python SDK format (camelCase)
-		"api/v1/order_books",   // Legacy snake_case format
-		"/v1/orderBooks",       // Legacy format with camelCase
-		"/v1/order_books",      // Legacy format with snake_case
-		"api/v1/orderbooks",    // Alternative format (no underscore)
-		"/v1/orderbooks",       // Alternative legacy format
+		"api/v1/orderBooks",  // Official Python SDK format (camelCase)
+		"api/v1/order_books", // Legacy snake_case format
+		"/v1/orderBooks",     // Legacy format with camelCase
+		"/v1/order_books",    // Legacy format with snake_case
+		"api/v1/orderbooks",  // Alternative format (no underscore)
+		"/v1/orderbooks",     // Alternative legacy format
 	}
 
 	var lastErr error
@@ -791,8 +829,8 @@ func (c *Client) AccountsByL1Address(ctx context.Context, l1Address string, auth
 
 	var lastErr error
 	for _, endpoint := range endpoints {
-	resp, err := c.doRequest(ctx, "GET", endpoint, nil, authToken)
-	if err != nil {
+		resp, err := c.doRequest(ctx, "GET", endpoint, nil, authToken)
+		if err != nil {
 			lastErr = err
 			continue
 		}
@@ -808,7 +846,7 @@ func (c *Client) AccountsByL1Address(ctx context.Context, l1Address string, auth
 
 		// Check if response is successful
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-	var result json.RawMessage
+			var result json.RawMessage
 			if err := json.Unmarshal(body, &result); err == nil {
 				return result, nil
 			}
@@ -869,7 +907,7 @@ func (c *Client) AccountActiveOrders(ctx context.Context, accountIndex uint32, m
 	if authToken != "" {
 		q.Set("auth", authToken)
 	}
-	
+
 	endpoint := fmt.Sprintf("api/v1/accountActiveOrders?%s", q.Encode())
 	// Don't pass authToken to doRequest - it's already in the query parameter
 	return c.singleRequest(ctx, "GET", endpoint, nil, "")
@@ -891,7 +929,7 @@ func (c *Client) AccountInactiveOrders(ctx context.Context, accountIndex uint32,
 	if marketID != nil {
 		q.Set("market_id", fmt.Sprintf("%d", *marketID))
 	}
-	
+
 	endpoint := fmt.Sprintf("api/v1/accountInactiveOrders?%s", q.Encode())
 	// Don't pass authToken to doRequest - it's already in the query parameter
 	return c.singleRequest(ctx, "GET", endpoint, nil, "")
@@ -903,20 +941,20 @@ func (c *Client) Orders(ctx context.Context, accountIndex *uint32, authToken str
 	if accountIndex == nil {
 		return nil, fmt.Errorf("account_index is required")
 	}
-	
+
 	// Try to get active orders first (for all markets, we'll need to iterate or use market_id=255 for all)
 	// For now, try market_id=255 (all markets) based on Python SDK defaults
 	activeOrders, err := c.AccountActiveOrders(ctx, *accountIndex, 255, authToken)
 	if err == nil {
 		return activeOrders, nil
 	}
-	
+
 	// If active orders fails, try inactive orders with a reasonable limit
 	inactiveOrders, err2 := c.AccountInactiveOrders(ctx, *accountIndex, 100, authToken, nil)
 	if err2 == nil {
 		return inactiveOrders, nil
 	}
-	
+
 	return nil, fmt.Errorf("failed to fetch orders: active orders error: %v, inactive orders error: %v", err, err2)
 }
 
@@ -926,18 +964,18 @@ func (c *Client) singleRequest(ctx context.Context, method, endpoint string, bod
 	if err != nil {
 		return nil, err
 	}
-	
+
 	defer resp.Body.Close()
-	
+
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
-	
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
-	
+
 	return json.RawMessage(bodyBytes), nil
 }
 
@@ -965,10 +1003,10 @@ func (c *Client) OrderBookOrders(ctx context.Context, marketID uint32, authToken
 	limit := 20
 	// Try multiple endpoint formats - API requires market_id and limit parameters
 	endpoints := []string{
-		fmt.Sprintf("api/v1/orderBookOrders?market_id=%d&limit=%d", marketID, limit), // Official format
-		fmt.Sprintf("api/v1/orderBookOrders?market_id=%d", marketID), // Try without limit first
+		fmt.Sprintf("api/v1/orderBookOrders?market_id=%d&limit=%d", marketID, limit),   // Official format
+		fmt.Sprintf("api/v1/orderBookOrders?market_id=%d", marketID),                   // Try without limit first
 		fmt.Sprintf("api/v1/order_book_orders?market_id=%d&limit=%d", marketID, limit), // Legacy snake_case format
-		fmt.Sprintf("/v1/orderBookOrders?market_id=%d&limit=%d", marketID, limit),    // Legacy format with camelCase
+		fmt.Sprintf("/v1/orderBookOrders?market_id=%d&limit=%d", marketID, limit),      // Legacy format with camelCase
 		fmt.Sprintf("/v1/order_book_orders?market_id=%d&limit=%d", marketID, limit),    // Legacy format with snake_case
 	}
 

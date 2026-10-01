@@ -18,13 +18,17 @@ type Config struct {
 	ChainID          uint32 // Lighter chain ID (default: 304 for mainnet)
 
 	// WalletBackend: "" or "env" uses LIGHTER_* secrets below. "supabase" loads an encrypted row.
-	WalletBackend          string
-	SupabaseURL            string
-	SupabaseServiceKey     string
-	WalletMasterPassword   string // Prefer env LIGHTER_WALLET_MASTER_PASSWORD; never log.
-	WalletUnlockPassword   string // Runtime unlock; prefer env LIGHTER_WALLET_UNLOCK_PASSWORD.
-	WalletID               string // UUID of row in lighter_wallet
-	WalletName             string // Unique wallet name (alternative to ID)
+	WalletBackend        string
+	SupabaseURL          string
+	SupabaseServiceKey   string
+	WalletMasterPassword string // Prefer env LIGHTER_WALLET_MASTER_PASSWORD; never log.
+	WalletUnlockPassword string // Runtime unlock; prefer env LIGHTER_WALLET_UNLOCK_PASSWORD.
+	WalletID             string // UUID of row in lighter_wallet
+	WalletName           string // Unique wallet name (alternative to ID)
+
+	// ProxyFile is a host:port:user:pass list. Lighter HTTP uses it round-robin.
+	// Empty means proxies.txt in the working directory when that file exists.
+	ProxyFile string
 }
 
 func getenv(key, def string) string {
@@ -64,5 +68,6 @@ func Load() Config {
 		WalletUnlockPassword: getenv("LIGHTER_WALLET_UNLOCK_PASSWORD", ""),
 		WalletID:             getenv("LIGHTER_WALLET_ID", ""),
 		WalletName:           getenv("LIGHTER_WALLET_NAME", ""),
+		ProxyFile:            getenv("LIGHTER_PROXY_FILE", "proxies.txt"),
 	}
 }

@@ -9,13 +9,12 @@ import (
 	"os"
 	"time"
 
-	lighterclient "github.com/elliottech/lighter-go/client"
-	lighterhttp "github.com/elliottech/lighter-go/client/http"
-	lightertypes "github.com/elliottech/lighter-go/types"
-	lightertxtypes "github.com/elliottech/lighter-go/types/txtypes"
 	"github.com/0xarchiviste/lighter-mcp/pkg/api"
 	"github.com/0xarchiviste/lighter-mcp/pkg/config"
 	"github.com/0xarchiviste/lighter-mcp/pkg/markets"
+	lighterclient "github.com/elliottech/lighter-go/client"
+	lightertypes "github.com/elliottech/lighter-go/types"
+	lightertxtypes "github.com/elliottech/lighter-go/types/txtypes"
 )
 
 // OrderSide represents order side
@@ -30,7 +29,7 @@ const (
 type OrderType string
 
 const (
-	OrderTypeLimit            OrderType = "limit"
+	OrderTypeLimit           OrderType = "limit"
 	OrderTypeMarket          OrderType = "market"
 	OrderTypeStopLoss        OrderType = "stop-loss"
 	OrderTypeStopLossLimit   OrderType = "stop-loss-limit"
@@ -43,10 +42,10 @@ const (
 type TimeInForce string
 
 const (
-	TIFGTT TimeInForce = "good-till-time" // Good Till Time
-	TIFGTC TimeInForce = "good-till-cancel" // Good Till Cancel (same as GTT but commonly called GTC)
+	TIFGTT TimeInForce = "good-till-time"      // Good Till Time
+	TIFGTC TimeInForce = "good-till-cancel"    // Good Till Cancel (same as GTT but commonly called GTC)
 	TIFIOC TimeInForce = "immediate-or-cancel" // Immediate Or Cancel
-	TIFPO  TimeInForce = "post-only" // Post Only
+	TIFPO  TimeInForce = "post-only"           // Post Only
 )
 
 // OrderPlacementClient provides order placement and cancellation operations
@@ -66,8 +65,8 @@ func NewOrderPlacementClient(apiClient *api.Client, cfg config.Config) (*OrderPl
 		return nil, fmt.Errorf("account_index is required (set LIGHTER_ACCOUNT_INDEX)")
 	}
 
-	// Create SDK TxClient for transaction building
-	httpClient := lighterhttp.NewClient(cfg.BaseURL)
+	// Create SDK TxClient for transaction building. Nonce lookups share the API client's proxy pool.
+	httpClient := apiClient.GetSDKClient()
 	txClient, err := lighterclient.NewTxClient(httpClient, cfg.APIKeyPrivateKey, int64(cfg.AccountIndex), uint8(cfg.APIKeyIndex), cfg.ChainID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TxClient: %w", err)
@@ -226,7 +225,7 @@ func (c *OrderPlacementClient) PlaceOrder(ctx context.Context, marketSymbol stri
 		IsAsk:            isAsk,
 		Type:             orderTypeSDK,
 		TimeInForce:      tifSDK,
-		ReduceOnly:       0, // Not reduce-only
+		ReduceOnly:       0,                      // Not reduce-only
 		TriggerPrice:     triggerPriceHundredths, // Trigger price for stop-loss/take-profit orders
 		OrderExpiry:      orderExpiry,
 	}
@@ -434,7 +433,7 @@ func (c *OrderPlacementClient) CancelAllOrdersForMarket(ctx context.Context, mar
 	for _, order := range marketOrders {
 		clientOrderIndex := int64(order.ClientOrderIndex)
 		fmt.Fprintf(os.Stderr, "[DEBUG] Cancelling order: client_order_index=%d\n", clientOrderIndex)
-		
+
 		txHash, err := c.CancelOrder(ctx, marketSymbol, clientOrderIndex, authToken)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Failed to cancel order %d: %v\n", clientOrderIndex, err)
@@ -471,7 +470,7 @@ func (c *OrderPlacementClient) CancelAllOrders(ctx context.Context, authToken st
 	// Based on error "CancelAllTime should be nil", it seems Time should be nil
 	txReq := &lightertypes.CancelAllOrdersTxReq{
 		TimeInForce: lightertxtypes.ImmediateCancelAll, // Cancel all immediately
-		Time:        0,                                  // Set to 0 or check if nil is needed
+		Time:        0,                                 // Set to 0 or check if nil is needed
 	}
 
 	// Create transaction options WITH THE CORRECT NONCE
@@ -612,4 +611,3 @@ func (c *OrderPlacementClient) sendOrderTransaction(ctx context.Context, txInfo 
 	// Send transaction
 	return c.apiClient.SendTxRaw(ctx, payload, authToken)
 }
-
