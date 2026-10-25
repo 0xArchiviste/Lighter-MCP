@@ -1,8 +1,8 @@
 # lighter-mcp
 
-Lighter.xyz trading server for people and agents. One process exposes the same tools over stdio MCP and over gRPC (`mcp.v1.MCP` plus `lighter.v1.Lighter`). HTTP and WebSocket calls to Lighter go through the rotating proxy list in `proxies.txt` when that file is present.
+Lighter.xyz trading server for people and agents. One process exposes the same tools over stdio MCP and over gRPC (`mcp.v1.MCP` plus `lighter.v1.Lighter`). HTTP and WebSocket calls to Lighter connect directly unless `LIGHTER_PROXY_FILE` names a rotating proxy list.
 
-Lighter refuses US egress on its WebSocket `/stream` and on orders with code `20558` ("restricted jurisdiction"). REST reads work from the US. This is a jurisdiction gate, not a missing proxy. The residential pool in `proxies.txt` has returned HTTP 407 since 2026-10-03. Run streaming and orders from a non-US host.
+Lighter refuses US egress on its WebSocket `/stream` and on orders with code `20558` ("restricted jurisdiction"). REST reads work from the US. This is a jurisdiction gate, not a missing proxy. The old heroproxies pool is gone (see Proxies). Run streaming and orders from a non-US host.
 
 ## Run
 
@@ -22,10 +22,9 @@ Flags:
 | `-grpc-auth` | `none` | `none`, `bearer`, or `apikey` |
 | `-grpc-api-key` | `dev-key` | Expected `x-mcp-api-key` when `-grpc-auth=apikey` |
 
-A healthy start prints two lines:
+A healthy start prints:
 
 ```text
-[proxy] rotating N proxies from <path>
 gRPC listening on 127.0.0.1:9090 (auth=none) — gRPC-MCP mcp.v1.MCP + lighter.v1.Lighter SDK
 ```
 
@@ -52,7 +51,7 @@ Other defaults: `LIGHTER_BASE_URL=https://mainnet.zklighter.elliot.ai`, `LIGHTER
 
 ## Proxies
 
-`LIGHTER_PROXY_FILE` defaults to `proxies.txt` in the working directory. Point it at an absolute path if the process is not started from this repo.
+Connections are direct by default. Proxying is opt-in: set `LIGHTER_PROXY_FILE` to the path of a proxy list, and the process logs `[proxy] rotating N proxies from <path>` at start. There is no implicit `proxies.txt` default. The heroproxies residential pool used until October 2026 is dead (HTTP 407 on every session since 2026-10-03) and was removed; Lighter REST works direct.
 
 Each non-empty, non-comment line is one proxy:
 
@@ -64,9 +63,9 @@ https://user:pass@host:port
 
 Lighter REST uses the next proxy on every request. A dead connection, HTTP 429, 502, 503, or 504, or a non-JSON HTTP 403, is tried on the next proxy, up to three times. A JSON 403 is the API's own answer and is returned as-is. A WebSocket dial keeps the one proxy chosen for that connection. Supabase wallet calls are not proxied.
 
-A missing default `proxies.txt` means direct connections. A bad line, or a `LIGHTER_PROXY_FILE` that cannot be read, is logged and the process continues direct.
+A bad line, or a `LIGHTER_PROXY_FILE` that cannot be read, is logged and the process continues direct.
 
-`proxies.txt` is gitignored. Do not commit it. Logs print the file path and the count, not usernames or passwords.
+Proxy lists named `proxies.txt` are gitignored. Do not commit one. Logs print the file path and the count, not usernames or passwords.
 
 ## Tools
 
