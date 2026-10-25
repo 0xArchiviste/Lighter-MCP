@@ -10,10 +10,12 @@ Read this before starting the server, changing proxy behavior, or sending an ord
   - `LIGHTER_API_KEY_PRIVATE_KEY` is the Lighter API key for that slot.
   - Wallet B's Ethereum key is `FUNDING_KEY` in that file. This process reads it only as `LIGHTER_ETH_PRIVATE_KEY`. `WALLET_B_PRIVATE_KEY` is a kaiba alias and is not read here.
 - **Never print, log, commit, or pass secrets as arguments.** That covers API keys, `FUNDING_KEY`, Supabase service keys, wallet passwords, and proxy usernames or passwords. `proxies.txt` is gitignored. `proxyrot.Entry.String` is host and port only; keep it that way.
-- **Load a narrow environment.** Copy only the `LIGHTER_*` names above, plus `LIGHTER_BASE_URL` (default `https://mainnet.zklighter.elliot.ai`), `LIGHTER_CHAIN_ID` (default `304`), and `LIGHTER_PROXY_FILE`. Do not source the whole kaiba `.env` into the process.
+- **Load a narrow environment.** Copy only the `LIGHTER_*` names above, plus `LIGHTER_BASE_URL` (default `https://mainnet.zklighter.elliot.ai`), `LIGHTER_CHAIN_ID` (default `304`), `LIGHTER_WS_PATH` (default `stream`), and `LIGHTER_PROXY_FILE`. Do not source the whole kaiba `.env` into the process.
 - **Orders are live.** `lighter_place_limit_order`, `lighter_cancel_order`, `lighter_set_tp_sl`, and `lighter_close_position` submit real Lighter transactions. Do not call them unless the user asked for that trade.
 - **One listener.** The service is gRPC on `127.0.0.1:9090` with `-grpc-auth=none`. It is not a systemd unit. If the port is already taken, the existing process is the service; do not start another. Restart only when the user asks or the process has exited.
 - **Proxy file.** Set `LIGHTER_PROXY_FILE` to the absolute path of this repo's `proxies.txt` unless the working directory is the repo root. A missing default file means direct connections. Sal asked for this rotating pool on 2026-10-01. `kaiba-orchestrator/treasury/AGENTS.md` still says not to proxy Lighter without that decision; this file is the later instruction for this server.
+- **The proxy pool is dead.** The heroproxies residential sessions in `proxies.txt` have returned HTTP 407 since 2026-10-03. Do not treat a Lighter failure as a missing or broken proxy. Without a working `proxies.txt`, run direct.
+- **US egress is jurisdiction-gated.** Lighter refuses US egress with code `20558` ("restricted jurisdiction"). The 2026-10-24 audit saw this on the WebSocket `/stream`; earlier runs saw it on `sendTx`. REST reads work from the US. The gate is the venue's, not a proxy problem, and Lighter's terms forbid getting around it. Run streaming and orders from the Tokyo host.
 
 ## Start
 
@@ -33,7 +35,7 @@ gRPC listening on 127.0.0.1:9090 (auth=none) — gRPC-MCP mcp.v1.MCP + lighter.v
 
 stdio (`-transport=stdio`, the default) is only for a parent that speaks MCP on the pipes. `-grpc-auth` may be `none`, `bearer`, or `apikey`.
 
-The local process started 2026-10-01 uses Wallet B, account `194667`, API key index `3`, and 100 proxies. Confirm with the listen log before assuming it is still up.
+The local process started 2026-10-01 uses Wallet B, account `194667`, API key index `3`, and 100 proxies (dead since 2026-10-03, see above). Confirm with the listen log before assuming it is still up.
 
 ## Proxy behavior
 
@@ -41,7 +43,7 @@ Implemented in `pkg/proxyrot` and wired in `pkg/api.New`.
 
 - Round-robin, one proxy per HTTP request. The same pool serves REST (`pkg/api`) and the SDK nonce and API-key client (`pkg/api/sdk_http.go`).
 - Retry the next proxy, at most three times, on dial errors, HTTP 429, 502, 503, 504, and HTTP 403 whose `Content-Type` is not JSON. Return JSON 403 unchanged.
-- WebSocket (`pkg/ws`) keeps the single proxy from `Client.NextProxy` for that dial.
+- WebSocket (`pkg/ws`) keeps the single proxy from `Client.NextProxy` for that dial. The path is `/stream`, or `LIGHTER_WS_PATH` when set. The old `/ws` path returns 403 from every egress.
 - Supabase (`pkg/walletstore`) stays direct.
 - Do not log proxy URLs with userinfo.
 

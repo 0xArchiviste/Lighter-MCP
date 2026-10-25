@@ -2,6 +2,8 @@
 
 Lighter.xyz trading server for people and agents. One process exposes the same tools over stdio MCP and over gRPC (`mcp.v1.MCP` plus `lighter.v1.Lighter`). HTTP and WebSocket calls to Lighter go through the rotating proxy list in `proxies.txt` when that file is present.
 
+Lighter refuses US egress on its WebSocket `/stream` and on orders with code `20558` ("restricted jurisdiction"). REST reads work from the US. This is a jurisdiction gate, not a missing proxy. The residential pool in `proxies.txt` has returned HTTP 407 since 2026-10-03. Run streaming and orders from a non-US host.
+
 ## Run
 
 The long-running service is gRPC on loopback. stdio is for a parent process that owns the pipes.
@@ -46,7 +48,7 @@ Do not use `steppe-systems-internals/lighter/.env`. Its `LIGHTER_ACCOUNT_INDEX` 
 
 Required or the process exits: `LIGHTER_API_KEY_PRIVATE_KEY`, and a non-zero `LIGHTER_ACCOUNT_INDEX`. Optional Supabase wallets use `LIGHTER_WALLET_BACKEND=supabase` plus `LIGHTER_WALLET_ID` or `LIGHTER_WALLET_NAME`, the master and unlock passwords, and the Supabase URL and service key. See `lighter-sdk wallet`.
 
-Other defaults: `LIGHTER_BASE_URL=https://mainnet.zklighter.elliot.ai`, `LIGHTER_CHAIN_ID=304`, `LIGHTER_API_KEY_INDEX=2` only when the variable is unset. Wallet B's slot is `3`, so set it explicitly.
+Other defaults: `LIGHTER_BASE_URL=https://mainnet.zklighter.elliot.ai`, `LIGHTER_CHAIN_ID=304`, `LIGHTER_WS_PATH=stream` (WebSocket path under the base URL), `LIGHTER_API_KEY_INDEX=2` only when the variable is unset. Wallet B's slot is `3`, so set it explicitly.
 
 ## Proxies
 

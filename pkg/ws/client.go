@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,6 +68,17 @@ type TradeUpdate struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
+// DefaultPath is Lighter's WebSocket endpoint. The old "ws" path returns 403.
+const DefaultPath = "stream"
+
+// Path returns LIGHTER_WS_PATH when set, else DefaultPath.
+func Path() string {
+	if p := strings.TrimSpace(os.Getenv("LIGHTER_WS_PATH")); p != "" {
+		return p
+	}
+	return DefaultPath
+}
+
 // NewClient creates a new WebSocket client. proxy is optional; when set, the
 // dial stays on that proxy for the life of the connection.
 func NewClient(baseURL string, authToken string, proxy *url.URL) *Client {
@@ -77,11 +90,10 @@ func NewClient(baseURL string, authToken string, proxy *url.URL) *Client {
 		wsURL = "ws" + wsURL[4:]
 	}
 
-	// Default WebSocket endpoint
 	if wsURL[len(wsURL)-1] != '/' {
 		wsURL += "/"
 	}
-	wsURL += "ws"
+	wsURL += strings.TrimPrefix(Path(), "/")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
