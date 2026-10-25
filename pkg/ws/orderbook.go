@@ -1,208 +1,208 @@
 package ws
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"sort"
+	"strconv"
 	"sync"
-	"time"
-
-	"github.com/0xarchiviste/lighter-mcp/pkg/api"
 )
 
-// OrderbookManager manages orderbook data from WebSocket
+// PriceLevel is one order book level as Lighter sends it.
+type PriceLevel struct {
+	Price string `json:"price"`
+	Size  string `json:"size"`
+}
+
+// OrderbookSnapshot is a market's book, bids best first (descending) and asks
+// best first (ascending).
+type OrderbookSnapshot struct {
+	Market   string
+	MarketID uint32
+	Offset   int64
+	Bids     []PriceLevel
+	Asks     []PriceLevel
+}
+
+// orderBookFrame is a subscribed/order_book or update/order_book frame. The
+// subscribed frame carries the full book; updates carry changed levels, with
+// size zero meaning the level is gone.
+type orderBookFrame struct {
+	Type      string `json:"type"`
+	Channel   string `json:"channel"`
+	OrderBook struct {
+		Asks   []PriceLevel `json:"asks"`
+		Bids   []PriceLevel `json:"bids"`
+		Offset int64        `json:"offset"`
+	} `json:"order_book"`
+}
+
+type book struct {
+	name   string
+	id     uint32
+	offset int64
+	bids   map[string]string
+	asks   map[string]string
+}
+
+// OrderbookManager keeps order books for subscribed markets.
 type OrderbookManager struct {
-	client      *Client
-	apiClient   *api.Client
-	orderbooks  map[string]*OrderbookSnapshot
-	orderbooksMu sync.RWMutex
-	subscribed  map[string]bool
-	subscribedMu sync.RWMutex
+	client  *Client
+	books   map[uint32]*book
+	booksMu sync.RWMutex
 }
 
 // NewOrderbookManager creates a new orderbook manager
-func NewOrderbookManager(wsClient *Client, apiClient *api.Client) *OrderbookManager {
+func NewOrderbookManager(wsClient *Client) *OrderbookManager {
 	return &OrderbookManager{
-		client:     wsClient,
-		apiClient:  apiClient,
-		orderbooks: make(map[string]*OrderbookSnapshot),
-		subscribed: make(map[string]bool),
+		client: wsClient,
+		books:  make(map[uint32]*book),
 	}
 }
 
-// Start starts listening for orderbook updates
-func (m *OrderbookManager) Start(ctx context.Context) error {
-	// Subscribe to all orderbooks
-	handler := func(data json.RawMessage) error {
-		return m.handleOrderbookUpdate(data)
+// Subscribe subscribes to order_book/<marketID>. name is the symbol used by
+// GetOrderbook; it may be empty. A rejected subscribe is returned, not hidden.
+func (m *OrderbookManager) Subscribe(marketID uint32, name string) error {
+	m.booksMu.Lock()
+	m.books[marketID] = &book{name: name, id: marketID, bids: map[string]string{}, asks: map[string]string{}}
+	m.booksMu.Unlock()
+
+	err := m.client.Subscribe(OrderBookChannel(marketID), func(data json.RawMessage) error {
+		return m.handleOrderbookUpdate(marketID, data)
+	})
+	if err != nil {
+		m.booksMu.Lock()
+		delete(m.books, marketID)
+		m.booksMu.Unlock()
+	}
+	return err
+}
+
+// Unsubscribe drops a market's book and unsubscribes from it.
+func (m *OrderbookManager) Unsubscribe(marketID uint32) error {
+	m.booksMu.Lock()
+	delete(m.books, marketID)
+	m.booksMu.Unlock()
+	return m.client.Unsubscribe(OrderBookChannel(marketID))
+}
+
+// handleOrderbookUpdate applies a subscribed/order_book snapshot or an
+// update/order_book delta.
+func (m *OrderbookManager) handleOrderbookUpdate(marketID uint32, data json.RawMessage) error {
+	var f orderBookFrame
+	if err := json.Unmarshal(data, &f); err != nil {
+		return fmt.Errorf("parse order book frame: %w", err)
 	}
 
-	// Try subscribing to different channels
-	channels := []string{
-		"orderbook",
-		"orderbooks",
-		"order_book",
-		"order_books",
-		"market_data",
-		"all",
+	m.booksMu.Lock()
+	defer m.booksMu.Unlock()
+	b, ok := m.books[marketID]
+	if !ok {
+		return nil
 	}
 
-	subscribed := false
-	for _, channel := range channels {
-		if err := m.client.Subscribe(channel, map[string]interface{}{
-			"channel": channel,
-		}, handler); err == nil {
-			log.Printf("Subscribed to orderbook channel: %s", channel)
-			subscribed = true
-			break
-		}
+	switch f.Type {
+	case "subscribed/order_book":
+		b.bids = map[string]string{}
+		b.asks = map[string]string{}
+	case "update/order_book":
+	default:
+		return nil
 	}
-
-	if !subscribed {
-		log.Println("Warning: Failed to subscribe to orderbook WebSocket, will use REST API fallback")
-	}
-
-	// Fallback: fetch orderbooks via REST API periodically if WebSocket fails
-	go m.restFallback(ctx)
-
+	applyLevels(b.bids, f.OrderBook.Bids)
+	applyLevels(b.asks, f.OrderBook.Asks)
+	b.offset = f.OrderBook.Offset
 	return nil
 }
 
-// handleOrderbookUpdate handles incoming orderbook updates
-func (m *OrderbookManager) handleOrderbookUpdate(data json.RawMessage) error {
-	var snapshot OrderbookSnapshot
-	if err := json.Unmarshal(data, &snapshot); err == nil {
-		if snapshot.Market != "" {
-			m.orderbooksMu.Lock()
-			m.orderbooks[snapshot.Market] = &snapshot
-			m.orderbooksMu.Unlock()
-			return nil
+func applyLevels(side map[string]string, levels []PriceLevel) {
+	for _, l := range levels {
+		if size, err := strconv.ParseFloat(l.Size, 64); err == nil && size == 0 {
+			delete(side, l.Price)
+			continue
 		}
-	}
-
-	// Try parsing as map of markets
-	var markets map[string]OrderbookSnapshot
-	if err := json.Unmarshal(data, &markets); err == nil {
-		m.orderbooksMu.Lock()
-		for market, snapshot := range markets {
-			m.orderbooks[market] = &snapshot
-		}
-		m.orderbooksMu.Unlock()
-		return nil
-	}
-
-	// Try parsing as array
-	var snapshots []OrderbookSnapshot
-	if err := json.Unmarshal(data, &snapshots); err == nil {
-		m.orderbooksMu.Lock()
-		for _, snapshot := range snapshots {
-			if snapshot.Market != "" {
-				m.orderbooks[snapshot.Market] = &snapshot
-			}
-		}
-		m.orderbooksMu.Unlock()
-		return nil
-	}
-
-	return fmt.Errorf("failed to parse orderbook update")
-}
-
-// restFallback fetches orderbooks via REST API as fallback
-func (m *OrderbookManager) restFallback(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Only use REST if WebSocket is not connected or no data received
-			if !m.client.IsConnected() || len(m.orderbooks) == 0 {
-				// Fetch markets first
-				markets, err := m.apiClient.Markets(ctx, "")
-				if err != nil {
-					continue
-				}
-
-				// Parse markets and fetch orderbooks
-				var marketList []string
-				var marketsData interface{}
-				if err := json.Unmarshal(markets, &marketsData); err == nil {
-					if marketsSlice, ok := marketsData.([]interface{}); ok {
-						for _, item := range marketsSlice {
-							if marketStr, ok := item.(string); ok {
-								marketList = append(marketList, marketStr)
-							} else if marketMap, ok := item.(map[string]interface{}); ok {
-								if name, ok := marketMap["name"].(string); ok {
-									marketList = append(marketList, name)
-								} else if symbol, ok := marketMap["symbol"].(string); ok {
-									marketList = append(marketList, symbol)
-								}
-							}
-						}
-					}
-				}
-
-				// Fetch orderbook for each market (limit to avoid rate limits)
-				for i, market := range marketList {
-					if i >= 10 { // Limit to 10 markets
-						break
-					}
-					orderbook, err := m.apiClient.OrderBookDetails(ctx, market, "")
-					if err == nil {
-						var obData OrderbookSnapshot
-						if err := json.Unmarshal(orderbook, &obData); err == nil {
-							obData.Market = market
-							m.orderbooksMu.Lock()
-							m.orderbooks[market] = &obData
-							m.orderbooksMu.Unlock()
-						}
-					}
-				}
-			}
-		}
+		side[l.Price] = l.Size
 	}
 }
 
-// GetOrderbook gets orderbook for a specific market
+func sortedLevels(side map[string]string, desc bool) []PriceLevel {
+	out := make([]PriceLevel, 0, len(side))
+	for p, s := range side {
+		out = append(out, PriceLevel{Price: p, Size: s})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		pi, _ := strconv.ParseFloat(out[i].Price, 64)
+		pj, _ := strconv.ParseFloat(out[j].Price, 64)
+		if desc {
+			return pi > pj
+		}
+		return pi < pj
+	})
+	return out
+}
+
+func (b *book) snapshot() *OrderbookSnapshot {
+	return &OrderbookSnapshot{
+		Market:   b.name,
+		MarketID: b.id,
+		Offset:   b.offset,
+		Bids:     sortedLevels(b.bids, true),
+		Asks:     sortedLevels(b.asks, false),
+	}
+}
+
+// GetOrderbook returns the book for a market symbol. It fails until the
+// subscribe snapshot has arrived.
 func (m *OrderbookManager) GetOrderbook(market string) (*OrderbookSnapshot, error) {
-	m.orderbooksMu.RLock()
-	defer m.orderbooksMu.RUnlock()
+	m.booksMu.RLock()
+	defer m.booksMu.RUnlock()
 
-	ob, exists := m.orderbooks[market]
-	if !exists {
-		return nil, fmt.Errorf("orderbook not found for market: %s", market)
+	for _, b := range m.books {
+		if b.name == market && (len(b.bids) > 0 || len(b.asks) > 0) {
+			return b.snapshot(), nil
+		}
 	}
-
-	return ob, nil
+	return nil, fmt.Errorf("orderbook not found for market: %s", market)
 }
 
-// GetAllOrderbooks gets all orderbooks
+// GetOrderbookByID returns the book for a market id.
+func (m *OrderbookManager) GetOrderbookByID(marketID uint32) (*OrderbookSnapshot, error) {
+	m.booksMu.RLock()
+	defer m.booksMu.RUnlock()
+
+	b, ok := m.books[marketID]
+	if !ok || (len(b.bids) == 0 && len(b.asks) == 0) {
+		return nil, fmt.Errorf("orderbook not found for market id: %d", marketID)
+	}
+	return b.snapshot(), nil
+}
+
+// GetAllOrderbooks returns every book that has data, keyed by symbol (or
+// market id when no symbol was given).
 func (m *OrderbookManager) GetAllOrderbooks() map[string]*OrderbookSnapshot {
-	m.orderbooksMu.RLock()
-	defer m.orderbooksMu.RUnlock()
+	m.booksMu.RLock()
+	defer m.booksMu.RUnlock()
 
 	result := make(map[string]*OrderbookSnapshot)
-	for market, ob := range m.orderbooks {
-		result[market] = ob
+	for _, b := range m.books {
+		if len(b.bids) == 0 && len(b.asks) == 0 {
+			continue
+		}
+		key := b.name
+		if key == "" {
+			key = strconv.FormatUint(uint64(b.id), 10)
+		}
+		result[key] = b.snapshot()
 	}
-
 	return result
 }
 
-// GetMarkets returns list of available markets
+// GetMarkets returns the symbols of books that have data.
 func (m *OrderbookManager) GetMarkets() []string {
-	m.orderbooksMu.RLock()
-	defer m.orderbooksMu.RUnlock()
-
-	markets := make([]string, 0, len(m.orderbooks))
-	for market := range m.orderbooks {
+	all := m.GetAllOrderbooks()
+	markets := make([]string, 0, len(all))
+	for market := range all {
 		markets = append(markets, market)
 	}
-
 	return markets
 }
-
-

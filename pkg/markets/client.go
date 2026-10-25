@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -522,74 +523,31 @@ func (c *Client) GetMarketsWithPricesWebSocket(ctx context.Context, authToken st
 	select {
 	case err := <-wsConnected:
 		if err != nil {
-			// WebSocket connection failed - return REST data only
+			log.Printf("markets: websocket unavailable, using REST prices only: %v", err)
 			return marketsWithStats, nil
 		}
 		defer wsClient.Close()
 	case <-wsCtx.Done():
-		// WebSocket connection timeout - return REST data only
+		log.Printf("markets: websocket connect timed out, using REST prices only")
 		return marketsWithStats, nil
 	}
 
-	// Create orderbook manager
-	orderbookManager := ws.NewOrderbookManager(wsClient, c.apiClient)
-
-	// Start orderbook manager (subscribes to orderbook channels)
-	if err := orderbookManager.Start(ctx); err != nil {
-		// If orderbook manager fails, return REST data
+	// Subscribe to order_book/<market_id> for the markets we care about. The
+	// subscribe ack carries the full book, so data is ready once it returns.
+	orderbookManager := ws.NewOrderbookManager(wsClient)
+	subscribed := 0
+	for _, market := range marketsWithStats {
+		if err := orderbookManager.Subscribe(market.MarketID, market.Name); err != nil {
+			log.Printf("markets: websocket %v; keeping REST prices for %s", err, market.Name)
+			continue
+		}
+		subscribed++
+	}
+	if subscribed == 0 {
 		return marketsWithStats, nil
 	}
 
-	// Subscribe to orderbooks for markets we care about
-	if len(marketsList) > 0 {
-		for _, market := range marketsList {
-			if _, ok := marketMap[market.Name]; ok {
-				// Try different subscription formats
-				subscriptions := []map[string]interface{}{
-					{"market": market.Name},
-					{"symbol": market.Name},
-					{"channel": "orderbook", "market": market.Name},
-				}
-				for _, sub := range subscriptions {
-					handler := func(data json.RawMessage) error {
-						return nil // OrderbookManager handles it internally
-					}
-					if err := wsClient.Subscribe("orderbook", sub, handler); err == nil {
-						break
-					}
-				}
-			}
-		}
-	}
-
-	// Wait briefly for WebSocket orderbook data (shorter timeout since we already have REST data)
-	timeout := time.After(3 * time.Second)
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			// Timeout - return markets with REST stats, WebSocket bid/ask if available
-			return c.enhanceWithWebSocketPrices(marketsWithStats, orderbookManager), nil
-		case <-ticker.C:
-			// Check if we got any WebSocket data
-			hasWebSocketData := false
-			for i := range marketsWithStats {
-				ob, err := orderbookManager.GetOrderbook(marketsWithStats[i].Name)
-				if err == nil && ob != nil {
-					hasWebSocketData = true
-					c.extractPricesFromWebSocketOrderbook(ob, &marketsWithStats[i])
-				}
-			}
-			// If we got WebSocket data, return immediately
-			if hasWebSocketData {
-				return marketsWithStats, nil
-			}
-		case <-ctx.Done():
-			return c.enhanceWithWebSocketPrices(marketsWithStats, orderbookManager), nil
-		}
-	}
+	return c.enhanceWithWebSocketPrices(marketsWithStats, orderbookManager), nil
 }
 
 // enhanceWithWebSocketPrices enhances REST market data with WebSocket bid/ask prices
@@ -606,8 +564,8 @@ func (c *Client) enhanceWithWebSocketPrices(marketsList []Market, orderbookManag
 // extractPricesFromWebSocketOrderbook extracts prices from WebSocket orderbook snapshot
 func (c *Client) extractPricesFromWebSocketOrderbook(ob *ws.OrderbookSnapshot, market *Market) {
 	// Extract best bid
-	if len(ob.Bids) > 0 && len(ob.Bids[0]) >= 2 {
-		if priceStr := ob.Bids[0][0]; priceStr != "" {
+	if len(ob.Bids) > 0 {
+		if priceStr := ob.Bids[0].Price; priceStr != "" {
 			if price, _, err := big.ParseFloat(priceStr, 10, 256, big.ToNearestEven); err == nil {
 				market.BidPrice = price
 			}
@@ -615,8 +573,8 @@ func (c *Client) extractPricesFromWebSocketOrderbook(ob *ws.OrderbookSnapshot, m
 	}
 
 	// Extract best ask
-	if len(ob.Asks) > 0 && len(ob.Asks[0]) >= 2 {
-		if priceStr := ob.Asks[0][0]; priceStr != "" {
+	if len(ob.Asks) > 0 {
+		if priceStr := ob.Asks[0].Price; priceStr != "" {
 			if price, _, err := big.ParseFloat(priceStr, 10, 256, big.ToNearestEven); err == nil {
 				market.AskPrice = price
 			}

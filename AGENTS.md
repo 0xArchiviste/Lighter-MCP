@@ -44,6 +44,7 @@ Implemented in `pkg/proxyrot` and wired in `pkg/api.New`.
 - Round-robin, one proxy per HTTP request. The same pool serves REST (`pkg/api`) and the SDK nonce and API-key client (`pkg/api/sdk_http.go`).
 - Retry the next proxy, at most three times, on dial errors, HTTP 429, 502, 503, 504, and HTTP 403 whose `Content-Type` is not JSON. Return JSON 403 unchanged.
 - WebSocket (`pkg/ws`) keeps the single proxy from `Client.NextProxy` for that dial. The path is `/stream`, or `LIGHTER_WS_PATH` when set. The old `/ws` path returns 403 from every egress.
+- `/stream` frames: send `{"type":"subscribe","channel":"order_book/<market_id>"}` after the server's `connected` frame. The ack is `subscribed/order_book` on channel `order_book:<id>` with the full book, then `update/order_book` deltas (size 0 removes a level). Unsubscribe gets `{"type":"unsubscribed"}`. Errors are `{"error":{"code","message"}}` with no channel: 30001 bad type, 30002 not subscribed, 30003 already subscribed, 30005 bad channel or market. Answer `{"type":"ping"}` with `{"type":"pong"}`. `ws.Client.Subscribe` returns these errors; it does not fall back to REST.
 - Supabase (`pkg/walletstore`) stays direct.
 - Do not log proxy URLs with userinfo.
 
