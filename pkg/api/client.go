@@ -51,17 +51,14 @@ func New(cfg config.Config) *Client {
 	}
 }
 
-// loadProxies opens cfg path, or proxies.txt when unset. A missing default file
-// means direct connections. An explicit path that cannot be read is an error.
+// loadProxies opens path. Empty means direct connections; there is no implicit
+// default file. A path that cannot be read is an error.
 func loadProxies(path string) (*proxyrot.Pool, string, error) {
 	if path == "" {
-		path = "proxies.txt"
+		return nil, path, nil
 	}
 	p, err := proxyrot.LoadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) && (path == "proxies.txt") {
-			return nil, path, nil
-		}
 		return nil, path, err
 	}
 	return p, path, nil

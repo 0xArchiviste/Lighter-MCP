@@ -27,7 +27,7 @@ type Config struct {
 	WalletName           string // Unique wallet name (alternative to ID)
 
 	// ProxyFile is a host:port:user:pass list. Lighter HTTP uses it round-robin.
-	// Empty means proxies.txt in the working directory when that file exists.
+	// Empty (the default) means direct connections.
 	ProxyFile string
 }
 
@@ -68,6 +68,6 @@ func Load() Config {
 		WalletUnlockPassword: getenv("LIGHTER_WALLET_UNLOCK_PASSWORD", ""),
 		WalletID:             getenv("LIGHTER_WALLET_ID", ""),
 		WalletName:           getenv("LIGHTER_WALLET_NAME", ""),
-		ProxyFile:            getenv("LIGHTER_PROXY_FILE", "proxies.txt"),
+		ProxyFile:            getenv("LIGHTER_PROXY_FILE", ""),
 	}
 }
